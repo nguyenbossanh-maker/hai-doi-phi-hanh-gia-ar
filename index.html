@@ -1,0 +1,4381 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>HAI ĐỘI PHI HÀNH GIA - Trò Chơi AR Sắp Xếp Hệ Mặt Trời</title>
+
+  <!-- Tải font chữ sắc nét, dễ đọc cho trẻ 5-6 tuổi và hỗ trợ đầy đủ tiếng Việt -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN cho hệ thống lưới đáp ứng chuẩn 16:9 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- MediaPipe Tasks Vision (HandLandmarker chế độ VIDEO ưu tiên GPU) + MediaPipe Hands dự phòng -->
+  <script type="module">
+    import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+    window.MediaPipeTasksVision = { FilesetResolver, HandLandmarker };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --font-display: 'Baloo 2', 'Nunito', sans-serif;
+      --font-body: 'Nunito', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      font-family: var(--font-body);
+      background-color: #09071a;
+      color: #ffffff;
+      touch-action: none;
+    }
+
+    .font-display {
+      font-family: var(--font-display);
+    }
+
+    /* 1. Luồng video Webcam toàn màn hình lật gương tự nhiên cho 2 bé đứng trước màn hình */
+    #webcam-video {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 1;
+      opacity: 0;
+      transition: opacity 0.45s ease;
+      pointer-events: none;
+    }
+
+    body.ar-active #webcam-video {
+      opacity: 1;
+    }
+
+    /* TỐI ƯU CHỐNG LAG KHI BẬT CAMERA: Tắt toàn bộ backdrop-filter làm mờ động đè lên video live */
+    body.ar-active header,
+    body.ar-active footer,
+    body.ar-active .slot-ring,
+    body.ar-active .tray-box-mars,
+    body.ar-active .tray-box-saturn,
+    body.ar-active #ai-settings-panel,
+    body.ar-active #toast-box > div,
+    body.ar-active #hand-overlap-warning > div {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    body.ar-active .slot-ring {
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    }
+
+    body.ar-active .tray-box-mars {
+      background: rgba(38, 10, 74, 0.72);
+    }
+
+    body.ar-active .tray-box-saturn {
+      background: rgba(10, 25, 68, 0.72);
+    }
+
+    /* 2. Lớp nền chia đôi 2 màu vũ trụ: Trái tím đậm (Đội Sao Hỏa), Phải xanh đậm (Đội Sao Thổ) */
+    #split-bg-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      pointer-events: none;
+    }
+
+    .bg-half-mars {
+      background:
+        radial-gradient(circle at 22% 45%, rgba(168, 85, 247, 0.32) 0%, transparent 55%),
+        radial-gradient(circle at 75% 20%, rgba(244, 63, 94, 0.18) 0%, transparent 50%),
+        linear-gradient(155deg, rgba(46, 16, 101, 0.96) 0%, rgba(59, 7, 100, 0.95) 52%, rgba(28, 7, 56, 0.98) 100%);
+      transition: background 0.45s ease;
+    }
+
+    .bg-half-saturn {
+      background:
+        radial-gradient(circle at 78% 45%, rgba(56, 189, 248, 0.28) 0%, transparent 55%),
+        radial-gradient(circle at 25% 20%, rgba(59, 130, 246, 0.22) 0%, transparent 50%),
+        linear-gradient(205deg, rgba(12, 34, 92, 0.96) 0%, rgba(15, 29, 78, 0.95) 52%, rgba(7, 17, 48, 0.98) 100%);
+      transition: background 0.45s ease;
+    }
+
+    /* Khi bật Camera AR: làm nền vũ trụ trong suốt vừa phải để thấy rõ 2 bé mà vẫn giữ màu đặc trưng mỗi đội */
+    body.ar-active .bg-half-mars {
+      background:
+        radial-gradient(circle at 22% 45%, rgba(168, 85, 247, 0.28) 0%, transparent 55%),
+        linear-gradient(155deg, rgba(59, 7, 100, 0.50) 0%, rgba(46, 16, 101, 0.44) 55%, rgba(24, 6, 48, 0.56) 100%);
+    }
+
+    body.ar-active .bg-half-saturn {
+      background:
+        radial-gradient(circle at 78% 45%, rgba(56, 189, 248, 0.24) 0%, transparent 55%),
+        linear-gradient(205deg, rgba(12, 42, 108, 0.50) 0%, rgba(15, 29, 78, 0.44) 55%, rgba(7, 17, 48, 0.56) 100%);
+    }
+
+    /* 3. Canvas sao lấp lánh ở lớp nền */
+    #bg-stars-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    /* 4. Đường kẻ dọc phát sáng ngăn cách 2 đội */
+    .center-divider-glow {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 4px;
+      z-index: 15;
+      pointer-events: none;
+      background: linear-gradient(
+        180deg,
+        rgba(244, 114, 182, 0.35) 0%,
+        rgba(255, 255, 255, 0.98) 25%,
+        rgba(56, 189, 248, 0.95) 50%,
+        rgba(255, 255, 255, 0.98) 75%,
+        rgba(192, 132, 252, 0.35) 100%
+      );
+      box-shadow:
+        0 0 12px rgba(255, 255, 255, 0.9),
+        0 0 26px rgba(192, 132, 252, 0.8),
+        0 0 36px rgba(56, 189, 248, 0.75);
+    }
+
+    /* 5. Canvas tiền cảnh cho con trỏ AR 2 bàn tay, sao nổ và pháo hoa */
+    #fx-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 60;
+      pointer-events: none;
+    }
+
+    /* Mặt Trời tỏa sáng cố định bên trái mỗi bảng */
+    @keyframes sunSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes sunPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.04); }
+    }
+    .sun-rays-spin {
+      transform-origin: center;
+      animation: sunSpin 28s linear infinite;
+    }
+    .sun-glow {
+      filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.72));
+      animation: sunPulse 3.6s ease-in-out infinite;
+    }
+    body.ar-active .sun-rays-spin,
+    body.ar-active .sun-glow {
+      animation: none;
+      filter: none;
+    }
+
+    /* Ô tròn nét đứt để đặt hành tinh */
+    .orbit-slot-cell {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .slot-ring {
+      position: relative;
+      border-radius: 9999px;
+      border: 3px dashed rgba(255, 255, 255, 0.72);
+      background: rgba(10, 12, 34, 0.42);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.12), 0 4px 16px rgba(0, 0, 0, 0.32);
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+
+    .team-mars .slot-ring {
+      border-color: rgba(244, 178, 255, 0.78);
+      background: rgba(59, 7, 100, 0.44);
+    }
+
+    .team-saturn .slot-ring {
+      border-color: rgba(147, 217, 255, 0.78);
+      background: rgba(12, 36, 94, 0.44);
+    }
+
+    .orbit-slot-cell.hover-target .slot-ring {
+      border-color: #fde047;
+      border-style: solid;
+      background: rgba(250, 204, 21, 0.26);
+      transform: scale(1.1);
+      box-shadow: 0 0 24px rgba(250, 204, 21, 0.9), inset 0 0 16px rgba(254, 240, 138, 0.55);
+    }
+
+    .orbit-slot-cell.wrong-flash .slot-ring {
+      border-color: #fb7185;
+      border-style: solid;
+      background: rgba(244, 63, 94, 0.32);
+      box-shadow: 0 0 22px rgba(251, 113, 133, 0.95);
+      animation: slotShake 0.4s ease;
+    }
+
+    .orbit-slot-cell.filled .slot-ring {
+      border-color: #4ade80;
+      border-style: solid;
+      background: rgba(34, 197, 94, 0.18);
+      box-shadow: 0 0 18px rgba(74, 222, 128, 0.75);
+    }
+
+    /* Hiệu ứng Gợi ý 3 giây */
+    .orbit-slot-cell.hint-glow .slot-ring {
+      border-color: #fde047;
+      box-shadow: 0 0 18px rgba(253, 224, 71, 0.85);
+    }
+
+    .slot-label {
+      margin-top: 2px;
+      font-size: clamp(9px, 0.88vw, 12px);
+      line-height: 1.1;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.86);
+      border: 1px solid rgba(253, 224, 71, 0.65);
+      color: #fef08a;
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateY(-2px);
+      transition: opacity 0.22s ease, transform 0.22s ease;
+      pointer-events: none;
+    }
+
+    .orbit-slot-cell.show-hint .slot-label {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .orbit-slot-cell.filled .slot-label {
+      opacity: 1;
+      transform: translateY(0);
+      border-color: rgba(74, 222, 128, 0.7);
+      color: #bbf7d0;
+    }
+
+    @keyframes slotShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-6px); }
+      45% { transform: translateX(6px); }
+      70% { transform: translateX(-4px); }
+      85% { transform: translateX(4px); }
+    }
+
+    /* Khay hành tinh phía dưới mỗi đội */
+    .tray-box-mars {
+      background: rgba(38, 10, 74, 0.62);
+      border: 2px solid rgba(216, 180, 254, 0.34);
+      box-shadow: inset 0 0 24px rgba(147, 51, 234, 0.22), 0 6px 20px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+    }
+
+    .tray-box-saturn {
+      background: rgba(10, 25, 68, 0.62);
+      border: 2px solid rgba(125, 211, 252, 0.34);
+      box-shadow: inset 0 0 24px rgba(37, 99, 235, 0.24), 0 6px 20px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+    }
+
+    .tray-anchor-cell {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .tray-anchor-pad {
+      border-radius: 16px;
+      border: 1.5px dashed rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* Phần tử hành tinh kéo thả */
+    .planet-item {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 30;
+      cursor: grab;
+      touch-action: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      will-change: transform;
+      transition: filter 0.18s ease;
+    }
+
+    .planet-item:hover:not(.locked):not(.dragging) {
+      filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.8));
+    }
+
+    .planet-item.smooth-move {
+      transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.18s ease;
+    }
+
+    .planet-item.dragging {
+      cursor: grabbing;
+      z-index: 50;
+      filter: drop-shadow(0 0 14px rgba(250, 204, 21, 0.95));
+      transition: none;
+    }
+
+    .planet-item.locked {
+      cursor: default;
+      z-index: 25;
+      pointer-events: none;
+      filter: drop-shadow(0 0 12px rgba(74, 222, 128, 0.65));
+    }
+
+    /* Nhãn thông báo "Đã chọn" nổi bật ngay trên hành tinh khi trẻ chụm tay chọn thành công */
+    .planet-selected-badge {
+      position: absolute;
+      top: -26px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.8);
+      padding: 2px 10px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, #fef08a, #facc15);
+      color: #1e1b4b;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+      border: 2px solid #ffffff;
+      box-shadow: 0 4px 14px rgba(250, 204, 21, 0.85);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 60;
+    }
+
+    .planet-item.dragging .planet-selected-badge {
+      opacity: 1;
+      transform: translateX(-50%) scale(1);
+    }
+
+    /* Bảng điều chỉnh độ nhạy AI gọn nhẹ ở góc trên phải */
+    .ai-seg-btn {
+      transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+    }
+    .ai-seg-btn.active {
+      background: linear-gradient(135deg, #fde047, #f59e0b);
+      color: #1e1b4b;
+      border-color: #fef08a;
+      box-shadow: 0 0 12px rgba(250, 204, 21, 0.45);
+    }
+
+    .ai-toggle-switch {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      border-radius: 9999px;
+      background: #334155;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      transition: background-color 0.2s ease, border-color 0.2s ease;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .ai-toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 9999px;
+      background: #ffffff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+      transition: transform 0.2s ease;
+    }
+    .ai-toggle-switch.on {
+      background: #06b6d4;
+      border-color: #67e8f9;
+    }
+    .ai-toggle-switch.on::after {
+      transform: translateX(18px);
+    }
+
+    .finger-pill {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 4px;
+      border-radius: 6px;
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(15, 23, 42, 0.78);
+      color: #94a3b8;
+      transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    }
+    .finger-pill.extended {
+      background: rgba(6, 182, 212, 0.28);
+      border-color: #22d3ee;
+      color: #cffafe;
+      box-shadow: 0 0 8px rgba(34, 211, 238, 0.4);
+    }
+    .finger-pill.curled {
+      background: rgba(245, 158, 11, 0.28);
+      border-color: #fbbf24;
+      color: #fef08a;
+    }
+
+    .planet-visual {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .planet-item.dragging .planet-visual {
+      transform: scale(1.18);
+    }
+
+    .planet-item.wiggle .planet-visual {
+      animation: planetWiggle 0.42s ease;
+    }
+
+    @keyframes planetWiggle {
+      0%, 100% { transform: rotate(0deg) scale(1); }
+      20% { transform: rotate(-14deg) scale(1.06); }
+      45% { transform: rotate(14deg) scale(1.06); }
+      70% { transform: rotate(-8deg) scale(1.03); }
+      85% { transform: rotate(8deg) scale(1.03); }
+    }
+
+    .planet-caption {
+      font-size: clamp(9px, 0.88vw, 12px);
+      line-height: 1.05;
+      font-weight: 800;
+      padding: 1.5px 7px;
+      border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      white-space: nowrap;
+      margin-top: -5px;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .planet-item.locked .planet-caption {
+      opacity: 0;
+    }
+
+    /* Hiệu ứng cộng điểm bay lên */
+    @keyframes floatScorePop {
+      0% { opacity: 0; transform: translate(-50%, 8px) scale(0.75); }
+      20% { opacity: 1; transform: translate(-50%, -10px) scale(1.12); }
+      80% { opacity: 1; transform: translate(-50%, -32px) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -48px) scale(0.92); }
+    }
+    .score-pop {
+      position: fixed;
+      z-index: 70;
+      pointer-events: none;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(14px, 1.3vw, 20px);
+      padding: 4px 14px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, #fde047, #f97316);
+      color: #1e1b4b;
+      box-shadow: 0 6px 20px rgba(249, 115, 22, 0.55), 0 0 0 2.5px rgba(255, 255, 255, 0.9);
+      white-space: nowrap;
+      animation: floatScorePop 1.25s ease-out forwards;
+    }
+
+    /* Hiệu ứng nhảy điểm trên bảng điểm */
+    @keyframes scoreBump {
+      0%, 100% { transform: scale(1); }
+      45% { transform: scale(1.26); color: #fde047; }
+    }
+    .score-bump {
+      animation: scoreBump 0.35s ease;
+    }
+
+    /* Nút bấm thanh công cụ dạng 3D nổi bật, giữ gọn trên 1 hàng ngang */
+    .btn-tool {
+      transition: transform 0.14s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.14s ease, box-shadow 0.14s ease;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn-tool:hover:not(:disabled) {
+      transform: translateY(-2px);
+      filter: brightness(1.08);
+    }
+    .btn-tool:active:not(:disabled) {
+      transform: translateY(1px) scale(0.97);
+    }
+    .btn-tool:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    /* Ẩn thanh cuộn nếu màn hình quá nhỏ trên thanh công cụ */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    @keyframes starBounce {
+      0%, 100% { transform: translateY(0) rotate(-4deg) scale(1); }
+      50% { transform: translateY(-8px) rotate(4deg) scale(1.08); }
+    }
+    .trophy-star {
+      animation: starBounce 1.7s ease-in-out infinite;
+    }
+    .trophy-star:nth-child(2) { animation-delay: 0.22s; }
+    .trophy-star:nth-child(3) { animation-delay: 0.44s; }
+  </style>
+</head>
+<body>
+
+  <!-- 1. WEBCAM TOÀN MÀN HÌNH LẬT GƯƠNG -->
+  <video id="webcam-video" autoplay playsinline muted></video>
+
+  <!-- 2. NỀN CHIA ĐÔI 2 MÀU VŨ TRỤ: TRÁI TÍM ĐẬM - PHẢI XANH ĐẬM -->
+  <div id="split-bg-layer">
+    <div class="bg-half-mars"></div>
+    <div class="bg-half-saturn"></div>
+  </div>
+
+  <!-- 3. CANVAS CÁC NGÔI SAO VŨ TRỤ LẤP LÁNH -->
+  <canvas id="bg-stars-canvas"></canvas>
+
+  <!-- 4. KHUNG GIAO DIỆN CHÍNH 16:9 KHÔNG CUỘN TRANG -->
+  <div id="app-shell" class="relative z-10 w-screen h-screen flex flex-col justify-between overflow-hidden">
+
+    <!-- =================================================================== -->
+    <!-- THANH THÔNG TIN PHÍA TRÊN (TIÊU ĐỀ TRÁI + ĐIỂM & ĐỒNG HỒ CHÍNH GIỮA) -->
+    <!-- =================================================================== -->
+    <header class="w-full shrink-0 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-950/75 backdrop-blur-md border-b border-white/20 shadow-xl z-20">
+
+      <!-- Góc trái: Tiêu đề "HAI ĐỘI PHI HÀNH GIA" -->
+      <div class="flex items-center gap-2 min-w-0">
+        <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-fuchsia-600 flex items-center justify-center text-xl sm:text-2xl shadow-lg border-2 border-yellow-200/75 shrink-0">
+          👩‍🚀
+        </div>
+        <div class="min-w-0 leading-tight">
+          <h1 class="font-display font-extrabold text-sm sm:text-lg lg:text-2xl tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-amber-300 to-sky-300 truncate">
+            HAI ĐỘI PHI HÀNH GIA
+          </h1>
+          <div class="text-[10px] sm:text-xs font-bold text-slate-300 truncate hidden md:block">
+            Thi đua AR sắp xếp Hệ Mặt Trời đồng thời
+          </div>
+        </div>
+      </div>
+
+      <!-- Chính giữa phía trên: Điểm Đội Sao Hỏa | Đồng hồ đếm ngược | Điểm Đội Sao Thổ -->
+      <div class="flex items-center justify-center gap-1.5 sm:gap-3">
+        <!-- Bảng điểm Đội Sao Hỏa -->
+        <div class="flex items-center gap-1.5 sm:gap-2.5 bg-gradient-to-r from-purple-950/95 to-fuchsia-950/90 border-2 border-rose-400/80 rounded-2xl px-2.5 sm:px-4 py-1 shadow-[0_0_16px_rgba(244,63,94,0.3)]">
+          <span class="text-base sm:text-xl leading-none">🔴</span>
+          <div class="flex flex-col leading-none">
+            <span class="text-[9px] sm:text-[11px] font-extrabold uppercase tracking-wider text-rose-200">Đội Sao Hỏa</span>
+            <div class="flex items-baseline gap-1">
+              <span id="score-mars" class="font-display font-extrabold text-lg sm:text-2xl text-amber-300 tabular-nums">0</span>
+              <span class="text-[10px] sm:text-xs font-bold text-rose-200/90">điểm</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Đồng hồ đếm ngược ở chính giữa -->
+        <div id="timer-box" class="flex flex-col items-center justify-center bg-slate-900/95 border-2 border-amber-300/85 rounded-2xl px-3 sm:px-5 py-1 shadow-[0_0_20px_rgba(251,191,36,0.35)] min-w-[82px] sm:min-w-[110px]">
+          <span class="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest text-amber-200/90 leading-none">Thời gian</span>
+          <div class="flex items-center gap-1 leading-tight">
+            <span class="text-sm sm:text-base">⏱️</span>
+            <span id="countdown-display" class="font-display font-extrabold text-lg sm:text-2xl text-white tabular-nums">02:00</span>
+          </div>
+        </div>
+
+        <!-- Bảng điểm Đội Sao Thổ -->
+        <div class="flex items-center gap-1.5 sm:gap-2.5 bg-gradient-to-l from-blue-950/95 to-sky-950/90 border-2 border-sky-400/80 rounded-2xl px-2.5 sm:px-4 py-1 shadow-[0_0_16px_rgba(56,189,248,0.3)]">
+          <div class="flex flex-col items-end leading-none">
+            <span class="text-[9px] sm:text-[11px] font-extrabold uppercase tracking-wider text-sky-200">Đội Sao Thổ</span>
+            <div class="flex items-baseline gap-1">
+              <span id="score-saturn" class="font-display font-extrabold text-lg sm:text-2xl text-amber-300 tabular-nums">0</span>
+              <span class="text-[10px] sm:text-xs font-bold text-sky-200/90">điểm</span>
+            </div>
+          </div>
+          <span class="text-base sm:text-xl leading-none">🪐</span>
+        </div>
+      </div>
+
+      <!-- Góc phải: Trạng thái AI (Camera / Số tay / FPS) + Nút cài đặt & hiệu chỉnh AI + Nút âm thanh -->
+      <div class="flex items-center justify-end gap-1.5 sm:gap-2 min-w-0">
+        <div id="ai-status-pill" class="hidden sm:flex items-center gap-1.5 bg-slate-900/85 border border-white/20 rounded-xl px-2.5 py-1 text-[11px] font-extrabold text-sky-200 shadow">
+          <span id="ai-status-dot" class="w-2.5 h-2.5 rounded-full bg-sky-400 shrink-0"></span>
+          <span id="ai-status-text" class="truncate max-w-[130px]">Chuột / Cảm ứng</span>
+          <span id="ai-telemetry-badge" class="hidden items-center gap-1.5 pl-1.5 ml-0.5 border-l border-white/20 text-[10px] font-extrabold text-amber-200 tabular-nums whitespace-nowrap">
+            <span id="ai-hands-count">0/2 tay</span>
+            <span class="text-white/35">•</span>
+            <span id="ai-fps-value">0 FPS</span>
+          </span>
+        </div>
+        <button id="btn-ai-settings" type="button" title="Cài đặt độ nhạy AI"
+          class="btn-tool w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-amber-300/50 flex items-center justify-center text-lg shadow">
+          <span>⚙️</span>
+        </button>
+        <button id="btn-sound" type="button" title="Bật / Tắt âm thanh"
+          class="btn-tool w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/25 flex items-center justify-center text-lg shadow">
+          <span id="sound-icon">🔊</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- =================================================================== -->
+    <!-- KHU VỰC THI ĐẤU CHIA ĐÔI MÀN HÌNH (TRÁI: SAO HỎA | PHẢI: SAO THỔ)   -->
+    <!-- =================================================================== -->
+    <main id="arena-container" class="relative flex-1 min-h-0 w-full grid grid-cols-2 overflow-hidden">
+
+      <!-- Đường kẻ dọc phát sáng ngăn cách 2 đội -->
+      <div class="center-divider-glow"></div>
+
+      <!-- ================= NỬA TRÁI: ĐỘI SAO HỎA (NỀN TÍM ĐẬM) ================= -->
+      <section id="panel-mars" class="team-panel team-mars relative h-full min-h-0 flex flex-col justify-between px-2 sm:px-3.5 py-1.5 sm:py-2 gap-1.5 overflow-hidden">
+
+        <!-- Tên Đội Sao Hỏa lớn, rõ ràng -->
+        <div class="shrink-0 flex items-center justify-between px-2 py-0.5">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-orange-400 to-rose-600 shadow-lg border border-rose-200 text-sm sm:text-base">🚀</span>
+            <h2 class="font-display font-extrabold text-lg sm:text-2xl lg:text-[26px] tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-rose-200 via-orange-300 to-amber-200 drop-shadow-[0_2px_8px_rgba(244,63,94,0.6)]">
+              ĐỘI SAO HỎA
+            </h2>
+          </div>
+          <span id="progress-mars" class="font-display font-extrabold text-xs sm:text-sm px-2.5 py-0.5 rounded-full bg-purple-950/85 border border-rose-300/60 text-rose-100 shadow">
+            0/8 hành tinh
+          </span>
+        </div>
+
+        <!-- Khu vực ghép hành tinh: Mặt Trời bên trái + 8 ô tròn nét đứt (2 hàng x 4 ô) -->
+        <div class="flex-[1.12] min-h-0 w-full flex items-center gap-1.5 sm:gap-2.5 bg-purple-950/35 border border-fuchsia-300/25 rounded-2xl px-2 sm:px-3 py-1.5 shadow-inner">
+          <!-- Mặt Trời cố định bên trái -->
+          <div class="sun-wrapper shrink-0 flex flex-col items-center justify-center" style="width: clamp(54px, 6.2vw, 102px);">
+            <div class="sun-glow w-full aspect-square flex items-center justify-center" data-sun-svg="mars"></div>
+            <span class="font-display font-extrabold text-[10px] sm:text-xs text-amber-300 bg-slate-950/75 px-2 py-0.5 rounded-full border border-amber-400/50 -mt-0.5 whitespace-nowrap">
+              Mặt Trời
+            </span>
+          </div>
+
+          <!-- Lưới ô tròn nét đứt (Hàng 1: 1,2,3,4 | Hàng 2: 5,6,7,8) -->
+          <div id="slots-mars" class="flex-1 h-full min-h-0 grid grid-cols-4 grid-rows-2 gap-x-1.5 gap-y-1 sm:gap-x-2.5 sm:gap-y-1.5 items-center justify-items-center">
+            <!-- Sinh động bởi JavaScript -->
+          </div>
+        </div>
+
+        <!-- Khay 8 hành tinh xáo trộn ngẫu nhiên (Hàng trên 4 | Hàng dưới 4) -->
+        <div class="tray-box-mars flex-1 min-h-0 w-full rounded-2xl px-2 sm:px-3 py-1.5 flex flex-col">
+          <div class="shrink-0 flex items-center justify-between px-1 mb-0.5">
+            <span class="text-[10px] sm:text-xs font-extrabold text-fuchsia-200/95">
+              ✨ Kéo hành tinh của Đội Sao Hỏa vào đúng số thứ tự
+            </span>
+            <span class="text-[10px] sm:text-xs font-bold text-amber-300 hidden sm:inline">+10 điểm / đúng</span>
+          </div>
+          <div id="tray-mars" class="flex-1 min-h-0 w-full grid grid-cols-4 grid-rows-2 gap-1.5 sm:gap-2 items-center justify-items-center">
+            <!-- 8 ô neo hành tinh được sinh bởi JavaScript -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= NỬA PHẢI: ĐỘI SAO THỔ (NỀN XANH ĐẬM) ================= -->
+      <section id="panel-saturn" class="team-panel team-saturn relative h-full min-h-0 flex flex-col justify-between px-2 sm:px-3.5 py-1.5 sm:py-2 gap-1.5 overflow-hidden">
+
+        <!-- Tên Đội Sao Thổ lớn, rõ ràng -->
+        <div class="shrink-0 flex items-center justify-between px-2 py-0.5">
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-sky-400 to-indigo-600 shadow-lg border border-sky-200 text-sm sm:text-base">🛸</span>
+            <h2 class="font-display font-extrabold text-lg sm:text-2xl lg:text-[26px] tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-sky-200 via-cyan-300 to-yellow-200 drop-shadow-[0_2px_8px_rgba(56,189,248,0.6)]">
+              ĐỘI SAO THỔ
+            </h2>
+          </div>
+          <span id="progress-saturn" class="font-display font-extrabold text-xs sm:text-sm px-2.5 py-0.5 rounded-full bg-blue-950/85 border border-sky-300/60 text-sky-100 shadow">
+            0/8 hành tinh
+          </span>
+        </div>
+
+        <!-- Khu vực ghép hành tinh: Mặt Trời bên trái + 8 ô tròn nét đứt (2 hàng x 4 ô) -->
+        <div class="flex-[1.12] min-h-0 w-full flex items-center gap-1.5 sm:gap-2.5 bg-blue-950/35 border border-sky-300/25 rounded-2xl px-2 sm:px-3 py-1.5 shadow-inner">
+          <!-- Mặt Trời cố định bên trái -->
+          <div class="sun-wrapper shrink-0 flex flex-col items-center justify-center" style="width: clamp(54px, 6.2vw, 102px);">
+            <div class="sun-glow w-full aspect-square flex items-center justify-center" data-sun-svg="saturn"></div>
+            <span class="font-display font-extrabold text-[10px] sm:text-xs text-amber-300 bg-slate-950/75 px-2 py-0.5 rounded-full border border-amber-400/50 -mt-0.5 whitespace-nowrap">
+              Mặt Trời
+            </span>
+          </div>
+
+          <!-- Lưới ô tròn nét đứt (Hàng 1: 1,2,3,4 | Hàng 2: 5,6,7,8) -->
+          <div id="slots-saturn" class="flex-1 h-full min-h-0 grid grid-cols-4 grid-rows-2 gap-x-1.5 gap-y-1 sm:gap-x-2.5 sm:gap-y-1.5 items-center justify-items-center">
+            <!-- Sinh động bởi JavaScript -->
+          </div>
+        </div>
+
+        <!-- Khay 8 hành tinh xáo trộn ngẫu nhiên (Hàng trên 4 | Hàng dưới 4) -->
+        <div class="tray-box-saturn flex-1 min-h-0 w-full rounded-2xl px-2 sm:px-3 py-1.5 flex flex-col">
+          <div class="shrink-0 flex items-center justify-between px-1 mb-0.5">
+            <span class="text-[10px] sm:text-xs font-extrabold text-sky-200/95">
+              ✨ Kéo hành tinh của Đội Sao Thổ vào đúng số thứ tự
+            </span>
+            <span class="text-[10px] sm:text-xs font-bold text-amber-300 hidden sm:inline">+10 điểm / đúng</span>
+          </div>
+          <div id="tray-saturn" class="flex-1 min-h-0 w-full grid grid-cols-4 grid-rows-2 gap-1.5 sm:gap-2 items-center justify-items-center">
+            <!-- 8 ô neo hành tinh được sinh bởi JavaScript -->
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- =================================================================== -->
+    <!-- THANH CÔNG CỤ PHÍA DƯỚI - TẤT CẢ 7 NÚT TRÊN CÙNG MỘT HÀNG NGANG     -->
+    <!-- =================================================================== -->
+    <footer class="w-full shrink-0 bg-slate-950/85 backdrop-blur-md border-t border-white/20 px-2 sm:px-4 py-1.5 sm:py-2 z-20 shadow-[0_-6px_24px_rgba(0,0,0,0.5)]">
+      <div class="w-full flex items-center justify-center gap-1.5 sm:gap-2.5 overflow-x-auto no-scrollbar">
+
+        <!-- 1. Bật AI – 2 bàn tay -->
+        <button id="btn-toggle-ai" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-emerald-400 to-emerald-600 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg border border-emerald-200/80">
+          <span id="ai-btn-icon">📷</span>
+          <span id="ai-btn-label">Bật AI – 2 bàn tay</span>
+        </button>
+
+        <!-- 2. Chọn 4 hành tinh hoặc 8 hành tinh -->
+        <button id="btn-planet-count" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-violet-400 to-purple-600 text-white font-extrabold text-xs sm:text-sm shadow-lg border border-violet-200/70">
+          <span>🪐</span>
+          <span id="planet-count-label">8 hành tinh</span>
+        </button>
+
+        <!-- 3. Chọn thời gian chơi -->
+        <button id="btn-select-time" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-sky-400 to-blue-600 text-white font-extrabold text-xs sm:text-sm shadow-lg border border-sky-200/70">
+          <span>⏱️</span>
+          <span id="time-select-label">Thời gian: 2 phút</span>
+        </button>
+
+        <!-- 4. Gợi ý 3 giây -->
+        <button id="btn-hint-3s" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-amber-300 to-amber-500 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg border border-yellow-100/85">
+          <span>💡</span>
+          <span id="hint-btn-label">Gợi ý 3 giây</span>
+        </button>
+
+        <!-- 5. Kết thúc và chấm điểm -->
+        <button id="btn-finish-score" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-rose-400 to-rose-600 text-white font-extrabold text-xs sm:text-sm shadow-lg border border-rose-200/70">
+          <span>🏁</span>
+          <span>Kết thúc &amp; chấm điểm</span>
+        </button>
+
+        <!-- 6. Toàn màn hình -->
+        <button id="btn-fullscreen" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-indigo-400 to-indigo-600 text-white font-extrabold text-xs sm:text-sm shadow-lg border border-indigo-200/70">
+          <span id="fullscreen-icon">⛶</span>
+          <span id="fullscreen-label">Toàn màn hình</span>
+        </button>
+
+        <!-- 7. Chơi lại -->
+        <button id="btn-restart" type="button"
+          class="btn-tool flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 rounded-xl bg-gradient-to-b from-orange-400 to-orange-600 text-white font-extrabold text-xs sm:text-sm shadow-lg border border-orange-200/75">
+          <span>🔄</span>
+          <span>Chơi lại</span>
+        </button>
+
+      </div>
+    </footer>
+  </div>
+
+  <!-- 5. LỚP CHỨA TẤT CẢ HÀNH TINH KÉO THẢ CỦA 2 ĐỘI -->
+  <div id="planets-layer" class="fixed inset-0 z-30 pointer-events-none"></div>
+
+  <!-- 6. CANVAS TIỀN CẢNH: CON TRỎ AR 2 BÀN TAY, HIỆU ỨNG NGÔI SAO & PHÁO HOA -->
+  <canvas id="fx-canvas"></canvas>
+
+  <!-- 7. THÔNG BÁO NỔI (TOAST - THAY THẾ HOÀN TOÀN ALERT) -->
+  <div id="toast-box"
+    class="fixed top-20 left-1/2 -translate-x-1/2 z-[90] max-w-lg w-[92%] pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-3">
+    <div class="bg-slate-900/95 border-2 border-amber-400 text-white rounded-2xl px-4 py-2.5 shadow-2xl flex items-center gap-2.5 backdrop-blur-md">
+      <span id="toast-icon" class="text-xl shrink-0">✨</span>
+      <p id="toast-message" class="text-xs sm:text-sm font-extrabold leading-snug"></p>
+    </div>
+  </div>
+
+  <!-- 7A. CẢNH BÁO GIAO NHAU / MẤT PHÂN BIỆT 2 BÀN TAY -->
+  <div id="hand-overlap-warning"
+    class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[86] max-w-xl w-[92%] pointer-events-none">
+    <div class="bg-rose-950/95 border-2 border-rose-400 text-rose-100 rounded-2xl px-4 py-2 shadow-[0_0_28px_rgba(244,63,94,0.65)] flex items-center justify-center gap-2 backdrop-blur-md animate-pulse">
+      <span class="text-lg shrink-0">⚠️</span>
+      <span id="hand-overlap-text" class="text-xs sm:text-sm font-extrabold text-center">
+        Hai bàn tay đang quá gần hoặc giao nhau – Tạm dừng kéo thả để tránh nhầm đội!
+      </span>
+    </div>
+  </div>
+
+  <!-- 7B. BẢNG HIỆU CHỈNH & ĐIỀU CHỈNH AI 5 NGÓN (21 LANDMARKS) CHO GIÁO VIÊN -->
+  <aside id="ai-settings-panel"
+    class="hidden fixed top-16 right-3 z-[88] w-[368px] max-w-[95vw] max-h-[calc(100vh-88px)] overflow-y-auto no-scrollbar bg-slate-950/95 border-2 border-cyan-400/75 rounded-2xl p-3.5 shadow-[0_14px_48px_rgba(0,0,0,0.82)] backdrop-blur-md text-white">
+    <div class="flex items-center justify-between pb-2 mb-2.5 border-b border-white/15">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🖐️</span>
+        <div>
+          <h3 class="font-display font-extrabold text-base text-cyan-300 leading-tight">Hiệu chỉnh AI – 5 ngón (21 khớp)</h3>
+          <p class="text-[10px] font-bold text-slate-300 leading-tight">Xử lý trực tiếp trên máy • Không lưu/tải video</p>
+        </div>
+      </div>
+      <button id="btn-close-ai-settings" type="button"
+        class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/20 text-xs font-extrabold flex items-center justify-center">
+        ✕
+      </button>
+    </div>
+
+    <!-- Khung xem camera nhỏ kiểm tra 21 landmarks màu xanh cyan -->
+    <div class="mb-2.5 rounded-xl overflow-hidden border border-cyan-400/45 bg-slate-900 relative">
+      <canvas id="mini-hand-preview" width="336" height="168" class="block w-full h-[142px] bg-slate-950"></canvas>
+      <div id="mini-preview-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-center px-3 bg-slate-950/80">
+        <span class="text-2xl mb-1">📷</span>
+        <span class="text-[11px] font-extrabold text-cyan-200">Bật AI – 2 bàn tay để xem khung xương 21 khớp</span>
+      </div>
+      <div class="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-cyan-400/50 text-[10px] font-extrabold text-cyan-200">
+        Kiểm tra 21 landmarks
+      </div>
+      <div class="absolute top-1.5 right-1.5 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-white/20 text-[10px] font-extrabold text-amber-200 tabular-nums">
+        <span id="panel-hands-state">0/2 tay</span>
+        <span class="text-white/35">•</span>
+        <span id="panel-fps-state">0 FPS</span>
+      </div>
+      <div id="panel-cam-state" class="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-white/15 text-[10px] font-extrabold text-sky-300">
+        Camera: Đang tắt
+      </div>
+    </div>
+
+    <!-- Hộp thông báo lỗi Camera (ẩn khi hoạt động bình thường) -->
+    <div id="panel-camera-error" class="hidden mb-2.5 p-2 rounded-xl bg-rose-950/90 border border-rose-400/70 text-[11px] font-bold text-rose-100 leading-snug"></div>
+
+    <!-- Chỉ báo trạng thái 2 đội + Trạng thái co/duỗi 5 ngón theo thời gian thực -->
+    <div class="grid grid-cols-2 gap-2 mb-2.5">
+      <!-- Trạng thái Đội Sao Hỏa (Trái) -->
+      <div class="p-2 rounded-xl bg-purple-950/60 border border-rose-400/40">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[10px] font-extrabold text-rose-200">🔴 Sao Hỏa</span>
+          <span id="team-lock-mars" class="text-[9px] font-extrabold text-amber-300 hidden">🔒 Đã khóa</span>
+        </div>
+        <div id="gesture-badge-mars" class="text-[11px] font-extrabold px-2 py-0.5 rounded-lg bg-slate-900/90 text-slate-300 text-center mb-1.5 border border-white/10">
+          Chưa nhận tay
+        </div>
+        <div id="fingers-mars" class="grid grid-cols-5 gap-0.5">
+          <span class="finger-pill" data-finger="thumb">C</span>
+          <span class="finger-pill" data-finger="index">T</span>
+          <span class="finger-pill" data-finger="middle">G</span>
+          <span class="finger-pill" data-finger="ring">A</span>
+          <span class="finger-pill" data-finger="pinky">Ú</span>
+        </div>
+      </div>
+
+      <!-- Trạng thái Đội Sao Thổ (Phải) -->
+      <div class="p-2 rounded-xl bg-blue-950/60 border border-sky-400/40">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[10px] font-extrabold text-sky-200">🪐 Sao Thổ</span>
+          <span id="team-lock-saturn" class="text-[9px] font-extrabold text-amber-300 hidden">🔒 Đã khóa</span>
+        </div>
+        <div id="gesture-badge-saturn" class="text-[11px] font-extrabold px-2 py-0.5 rounded-lg bg-slate-900/90 text-slate-300 text-center mb-1.5 border border-white/10">
+          Chưa nhận tay
+        </div>
+        <div id="fingers-saturn" class="grid grid-cols-5 gap-0.5">
+          <span class="finger-pill" data-finger="thumb">C</span>
+          <span class="finger-pill" data-finger="index">T</span>
+          <span class="finger-pill" data-finger="middle">G</span>
+          <span class="finger-pill" data-finger="ring">A</span>
+          <span class="finger-pill" data-finger="pinky">Ú</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1. Chế độ cử chỉ: NẮM–XÒE hoặc CHỤM–THẢ -->
+    <div class="mb-2.5">
+      <div class="flex items-center justify-between mb-1">
+        <label class="text-xs font-extrabold text-slate-100">Chế độ cử chỉ tay</label>
+        <span id="gesture-mode-hint" class="text-[10px] font-bold text-cyan-300">Xòe di chuyển • Nắm kéo</span>
+      </div>
+      <div class="grid grid-cols-2 gap-1.5" id="group-gesture-mode">
+        <button type="button" data-gesture-mode="fist"
+          class="ai-seg-btn active py-1.5 rounded-xl bg-slate-800 border border-white/15 text-xs font-extrabold text-slate-200">
+          ✊ NẮM – XÒE (5 ngón)
+        </button>
+        <button type="button" data-gesture-mode="pinch"
+          class="ai-seg-btn py-1.5 rounded-xl bg-slate-800 border border-white/15 text-xs font-extrabold text-slate-200">
+          🤏 CHỤM – THẢ
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. Các công tắc nhanh: Khung xương 21 khớp & Chế độ bàn tay nhỏ trẻ 5-6 tuổi -->
+    <div class="space-y-1.5 mb-2.5 p-2 rounded-xl bg-slate-900/80 border border-white/10">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-xs font-extrabold text-cyan-200">Hiển thị khung xương 21 khớp (Cyan)</span>
+        <button id="toggle-skeleton-overlay" type="button" class="ai-toggle-switch on" aria-label="Bật tắt khung xương bàn tay"></button>
+      </div>
+      <div class="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+        <div>
+          <div class="text-xs font-extrabold text-amber-200">Chế độ bàn tay nhỏ (Trẻ 5–6 tuổi)</div>
+          <div class="text-[10px] font-bold text-slate-400">Tự nới ngưỡng nắm/mở &amp; mở rộng vùng chọn</div>
+        </div>
+        <button id="toggle-child-mode" type="button" class="ai-toggle-switch on" aria-label="Bật tắt chế độ bàn tay nhỏ"></button>
+      </div>
+      <div class="pt-1.5 border-t border-white/10">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[11px] font-extrabold text-emerald-300">Tối ưu tốc độ Camera (Chống lag)</span>
+          <span id="panel-infer-ms" class="text-[10px] font-bold text-slate-300 tabular-nums">AI: -- ms</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1.5" id="group-cam-quality">
+          <button type="button" data-cam-quality="fast360"
+            class="ai-seg-btn active py-1 rounded-lg bg-slate-800 border border-white/15 text-[10px] font-extrabold text-slate-200">
+            ⚡ Mượt (360p)
+          </button>
+          <button type="button" data-cam-quality="lite270"
+            class="ai-seg-btn py-1 rounded-lg bg-slate-800 border border-white/15 text-[10px] font-extrabold text-slate-200">
+            🚀 Siêu nhẹ (270p)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Thanh điều chỉnh độ nhạy nhận diện -->
+    <div class="mb-2.5">
+      <div class="flex items-center justify-between mb-1">
+        <label for="slider-ai-sensitivity" class="text-xs font-extrabold text-slate-100">Độ nhạy nhận diện cử chỉ</label>
+        <span id="val-ai-sensitivity" class="text-[11px] font-extrabold text-amber-300 tabular-nums">Cao (80%)</span>
+      </div>
+      <input id="slider-ai-sensitivity" type="range" min="20" max="100" step="5" value="80"
+        class="w-full accent-cyan-400 cursor-pointer" />
+      <div class="flex justify-between text-[9px] font-bold text-slate-400">
+        <span>Chặt chẽ (Ít nhầm)</span>
+        <span>Cân bằng</span>
+        <span>Rất nhạy (Trẻ nhỏ)</span>
+      </div>
+    </div>
+
+    <!-- 4. Độ mượt con trỏ -->
+    <div class="mb-2.5">
+      <div class="flex items-center justify-between mb-1">
+        <label class="text-xs font-extrabold text-slate-100">Độ mượt con trỏ (lọc thích ứng)</label>
+      </div>
+      <div class="grid grid-cols-3 gap-1.5" id="group-cursor-smooth">
+        <button type="button" data-smooth="fast"
+          class="ai-seg-btn py-1.5 rounded-xl bg-slate-800 border border-white/15 text-xs font-extrabold text-slate-200">
+          Nhanh
+        </button>
+        <button type="button" data-smooth="balanced"
+          class="ai-seg-btn active py-1.5 rounded-xl bg-slate-800 border border-white/15 text-xs font-extrabold text-slate-200">
+          Cân bằng
+        </button>
+        <button type="button" data-smooth="smooth"
+          class="ai-seg-btn py-1.5 rounded-xl bg-slate-800 border border-white/15 text-xs font-extrabold text-slate-200">
+          Mượt
+        </button>
+      </div>
+    </div>
+
+    <!-- 5. Vùng chọn & Lực hút ô (gom gọn 2 cột) -->
+    <div class="grid grid-cols-2 gap-2.5 mb-2.5">
+      <div>
+        <div class="flex items-center justify-between mb-0.5">
+          <label for="slider-hit-margin" class="text-[11px] font-extrabold text-slate-200">Vùng chọn</label>
+          <span id="val-hit-margin" class="text-[10px] font-extrabold text-sky-300 tabular-nums">+40px</span>
+        </div>
+        <input id="slider-hit-margin" type="range" min="14" max="64" step="2" value="40"
+          class="w-full accent-amber-400 cursor-pointer" />
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-0.5">
+          <label for="slider-magnet-snap" class="text-[11px] font-extrabold text-slate-200">Hút tâm ô</label>
+          <span id="val-magnet-snap" class="text-[10px] font-extrabold text-emerald-300 tabular-nums">1.80x</span>
+        </div>
+        <input id="slider-magnet-snap" type="range" min="1.20" max="2.20" step="0.05" value="1.80"
+          class="w-full accent-emerald-400 cursor-pointer" />
+      </div>
+    </div>
+
+    <!-- 6. Khu vực Hiệu chỉnh bàn tay cho từng đội / khóa đội -->
+    <div class="p-2.5 rounded-xl bg-slate-900/90 border border-cyan-400/35 mb-2.5">
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-[11px] font-extrabold text-cyan-200">Chọn đối tượng hiệu chỉnh:</span>
+        <span id="calibration-threshold-summary" class="text-[10px] font-bold text-amber-300 tabular-nums">Ngưỡng tự động</span>
+      </div>
+      <div class="grid grid-cols-3 gap-1 mb-2" id="group-calibration-target">
+        <button type="button" data-cal-target="both"
+          class="ai-seg-btn active py-1 rounded-lg bg-slate-800 border border-white/15 text-[10px] font-extrabold text-slate-200">
+          Cả 2 đội
+        </button>
+        <button type="button" data-cal-target="mars"
+          class="ai-seg-btn py-1 rounded-lg bg-slate-800 border border-white/15 text-[10px] font-extrabold text-rose-200">
+          🔴 Sao Hỏa
+        </button>
+        <button type="button" data-cal-target="saturn"
+          class="ai-seg-btn py-1 rounded-lg bg-slate-800 border border-white/15 text-[10px] font-extrabold text-sky-200">
+          🪐 Sao Thổ
+        </button>
+      </div>
+
+      <div id="calibration-status-box" class="hidden mb-2 p-2 rounded-lg bg-indigo-950/90 border border-amber-300/70 text-center">
+        <div id="calibration-step-text" class="text-[11px] font-extrabold text-amber-200 mb-1.5">
+          Bước 1/2: Cho bé XÒE RỘNG 5 ngón tay trước camera...
+        </div>
+        <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+          <div id="calibration-progress-bar" class="h-full w-0 bg-gradient-to-r from-cyan-400 to-amber-300 transition-all duration-100"></div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <button id="btn-calibrate-hand" type="button"
+          class="btn-tool flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-extrabold text-xs shadow border border-cyan-100 flex items-center justify-center gap-1.5">
+          <span>🎯</span>
+          <span id="calibrate-btn-label">Hiệu chỉnh bàn tay</span>
+        </button>
+        <button id="btn-reset-ai-config" type="button" title="Khôi phục mặc định cho trẻ 5–6 tuổi"
+          class="btn-tool py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs border border-white/20">
+          Mặc định
+        </button>
+      </div>
+    </div>
+
+    <!-- 7. Nút trở về thao tác bằng chuột dự phòng -->
+    <button id="btn-fallback-mouse" type="button"
+      class="btn-tool w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/20 text-sky-200 font-extrabold text-xs flex items-center justify-center gap-1.5">
+      <span>🖱️</span>
+      <span>Trở về thao tác bằng chuột / cảm ứng</span>
+    </button>
+  </aside>
+
+  <!-- 8. BẢNG KẾT QUẢ & CHẤM ĐIỂM CHIẾN THẮNG -->
+  <div id="result-modal" class="hidden fixed inset-0 z-[85] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
+    <div class="relative w-full max-w-2xl bg-gradient-to-b from-indigo-950/95 via-slate-900/95 to-slate-950/95 border-4 border-amber-300 rounded-3xl p-5 sm:p-7 text-center shadow-[0_0_70px_rgba(250,204,21,0.45)]">
+      <div class="flex items-center justify-center gap-3 mb-2 text-4xl sm:text-5xl">
+        <span class="trophy-star inline-block">⭐</span>
+        <span class="trophy-star inline-block text-5xl sm:text-6xl -mt-3">🏆</span>
+        <span class="trophy-star inline-block">⭐</span>
+      </div>
+
+      <div class="inline-block px-3 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/60 text-amber-200 font-extrabold text-xs sm:text-sm mb-1.5">
+        KẾT QUẢ THI ĐẤU HAI ĐỘI PHI HÀNH GIA
+      </div>
+
+      <h2 id="result-winner-title" class="font-display font-extrabold text-2xl sm:text-4xl text-transparent bg-clip-text bg-gradient-to-r from-yellow-200 via-amber-300 to-orange-300 mb-1.5">
+        ĐỘI SAO HỎA CHIẾN THẮNG! 🎉
+      </h2>
+      <p id="result-subtitle" class="text-sky-100/90 text-sm sm:text-base font-bold mb-5">
+        Cả hai đội phi hành gia đều đã thi đấu rất xuất sắc!
+      </p>
+
+      <!-- Bảng so sánh 2 đội -->
+      <div class="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
+        <!-- Thẻ kết quả Đội Sao Hỏa -->
+        <div id="result-card-mars" class="rounded-2xl p-3.5 sm:p-4 bg-gradient-to-b from-purple-900/80 to-fuchsia-950/85 border-2 border-rose-400/75 text-center shadow-lg">
+          <div class="text-2xl mb-1">🔴</div>
+          <div class="font-display font-extrabold text-lg sm:text-xl text-rose-200">ĐỘI SAO HỎA</div>
+          <div id="result-score-mars" class="font-display font-extrabold text-3xl sm:text-4xl text-amber-300 my-1">0 điểm</div>
+          <div id="result-detail-mars" class="text-xs sm:text-sm font-bold text-rose-100/90">Đúng 0/8 hành tinh</div>
+          <div id="result-time-mars" class="text-xs font-bold text-amber-200/90 mt-0.5">Chưa hoàn thành</div>
+        </div>
+
+        <!-- Thẻ kết quả Đội Sao Thổ -->
+        <div id="result-card-saturn" class="rounded-2xl p-3.5 sm:p-4 bg-gradient-to-b from-blue-900/80 to-sky-950/85 border-2 border-sky-400/75 text-center shadow-lg">
+          <div class="text-2xl mb-1">🪐</div>
+          <div class="font-display font-extrabold text-lg sm:text-xl text-sky-200">ĐỘI SAO THỔ</div>
+          <div id="result-score-saturn" class="font-display font-extrabold text-3xl sm:text-4xl text-amber-300 my-1">0 điểm</div>
+          <div id="result-detail-saturn" class="text-xs sm:text-sm font-bold text-sky-100/90">Đúng 0/8 hành tinh</div>
+          <div id="result-time-saturn" class="text-xs font-bold text-amber-200/90 mt-0.5">Chưa hoàn thành</div>
+        </div>
+      </div>
+
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+        <button id="btn-modal-replay" type="button"
+          class="btn-tool w-full sm:flex-1 py-3.5 px-6 rounded-2xl bg-gradient-to-b from-emerald-400 via-emerald-500 to-green-600 text-white font-display font-extrabold text-xl shadow-[0_8px_24px_rgba(16,185,129,0.5)] border-2 border-emerald-200 flex items-center justify-center gap-2">
+          <span>🔄</span>
+          <span>Chơi Lại Ván Mới</span>
+        </button>
+        <button id="btn-modal-close" type="button"
+          class="btn-tool w-full sm:w-auto py-3.5 px-5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-display font-extrabold text-lg border border-white/25">
+          Xem lại bảng
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8B. HỘP HƯỚNG DẪN CẤP QUYỀN CAMERA KHI BỊ TỪ CHỐI HOẶC CHẠY TRONG KHUNG NHÚNG -->
+  <div id="camera-permission-modal" class="hidden fixed inset-0 z-[92] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+    <div class="relative w-full max-w-lg bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-950 border-2 border-amber-300/85 rounded-3xl p-5 sm:p-6 shadow-[0_0_50px_rgba(251,191,36,0.35)] text-left">
+      <div class="flex items-start gap-3 mb-3">
+        <div class="w-12 h-12 rounded-2xl bg-amber-400/20 border border-amber-300/60 flex items-center justify-center text-2xl shrink-0">
+          📷
+        </div>
+        <div>
+          <h3 id="cam-perm-title" class="font-display font-extrabold text-xl text-amber-300 leading-tight">
+            Chưa có quyền truy cập Camera
+          </h3>
+          <p id="cam-perm-desc" class="text-xs sm:text-sm font-bold text-slate-200 mt-1 leading-snug">
+            Trình duyệt hoặc khung xem trước hiện đang chặn quyền mở Webcam.
+          </p>
+        </div>
+      </div>
+
+      <div id="cam-perm-steps" class="rounded-2xl bg-slate-900/90 border border-white/15 p-3.5 mb-4 text-xs sm:text-sm font-bold text-sky-100 space-y-2 leading-relaxed">
+        <!-- Nội dung hướng dẫn động tùy môi trường -->
+      </div>
+
+      <div class="flex flex-col sm:flex-row items-center gap-2.5">
+        <button id="btn-cam-perm-retry" type="button"
+          class="btn-tool w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-b from-emerald-400 to-emerald-600 text-slate-950 font-extrabold text-sm shadow border border-emerald-200 flex items-center justify-center gap-1.5">
+          <span>🔄</span>
+          <span>Thử bật Camera lại</span>
+        </button>
+        <button id="btn-cam-perm-mouse" type="button"
+          class="btn-tool w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-b from-sky-400 to-blue-600 text-white font-extrabold text-sm shadow border border-sky-200 flex items-center justify-center gap-1.5">
+          <span>🖱️</span>
+          <span>Chơi bằng Chuột / Cảm ứng</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MÃ JAVASCRIPT ĐIỀU KHIỂN 2 ĐỘI ĐỘC LẬP, AR 2 BÀN TAY, ĐỒ HỌA & ÂM THANH   -->
+  <!-- ========================================================================= -->
+  <script>
+    (() => {
+      'use strict';
+
+      /* -----------------------------------------------------------------------
+       * 1. DỮ LIỆU 8 HÀNH TINH & ĐỒ HỌA SVG 3D NHẸ (ID ĐỘC LẬP CHO MỖI ĐỘI)
+       * ----------------------------------------------------------------------- */
+      function buildSunSVG(prefix) {
+        return `
+          <svg viewBox="0 0 200 200" class="w-full h-full overflow-visible">
+            <defs>
+              <radialGradient id="${prefix}-sunCore" cx="38%" cy="35%" r="65%">
+                <stop offset="0%" stop-color="#fef9c3" />
+                <stop offset="35%" stop-color="#fde047" />
+                <stop offset="75%" stop-color="#f97316" />
+                <stop offset="100%" stop-color="#ea580c" />
+              </radialGradient>
+              <radialGradient id="${prefix}-sunHalo" cx="50%" cy="50%" r="50%">
+                <stop offset="40%" stop-color="rgba(253, 224, 71, 0.58)" />
+                <stop offset="100%" stop-color="rgba(249, 115, 22, 0)" />
+              </radialGradient>
+            </defs>
+            <circle cx="100" cy="100" r="95" fill="url(#${prefix}-sunHalo)" />
+            <g class="sun-rays-spin" fill="#facc15" opacity="0.92">
+              <polygon points="100,5 111,31 89,31" />
+              <polygon points="100,195 111,169 89,169" />
+              <polygon points="5,100 31,111 31,89" />
+              <polygon points="195,100 169,111 169,89" />
+              <polygon points="32,32 58,43 43,58" />
+              <polygon points="168,168 142,157 157,142" />
+              <polygon points="168,32 157,58 142,43" />
+              <polygon points="32,168 43,142 58,157" />
+              <polygon points="62,12 76,35 55,39" opacity="0.78" />
+              <polygon points="138,188 124,165 145,161" opacity="0.78" />
+              <polygon points="188,62 165,76 161,55" opacity="0.78" />
+              <polygon points="12,138 35,124 39,145" opacity="0.78" />
+              <polygon points="138,12 145,39 124,35" opacity="0.78" />
+              <polygon points="62,188 55,161 76,165" opacity="0.78" />
+              <polygon points="188,138 161,145 165,124" opacity="0.78" />
+              <polygon points="12,62 39,55 35,76" opacity="0.78" />
+            </g>
+            <circle cx="100" cy="100" r="64" fill="url(#${prefix}-sunCore)" stroke="#fef08a" stroke-width="3" />
+            <ellipse cx="78" cy="72" rx="18" ry="11" transform="rotate(-25 78 72)" fill="rgba(255,255,255,0.45)" />
+            <circle cx="80" cy="96" r="5.5" fill="#451a03" />
+            <circle cx="82" cy="94" r="2" fill="#ffffff" />
+            <circle cx="120" cy="96" r="5.5" fill="#451a03" />
+            <circle cx="122" cy="94" r="2" fill="#ffffff" />
+            <ellipse cx="69" cy="107" rx="7" ry="4.5" fill="#fb7185" opacity="0.55" />
+            <ellipse cx="131" cy="107" rx="7" ry="4.5" fill="#fb7185" opacity="0.55" />
+            <path d="M 88 110 Q 100 123 112 110" fill="none" stroke="#451a03" stroke-width="4.2" stroke-linecap="round" />
+          </svg>`;
+      }
+
+      const PLANETS_DATA = [
+        {
+          id: 'mercury',
+          order: 1,
+          name: 'Sao Thủy',
+          color: '#cbd5e1',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-mercury" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#f5f5f4"/>
+                  <stop offset="48%" stop-color="#a8a29e"/>
+                  <stop offset="100%" stop-color="#44403c"/>
+                </radialGradient>
+              </defs>
+              <circle cx="60" cy="60" r="44" fill="url(#${p}-grad-mercury)" stroke="#f5f5f4" stroke-width="2.2"/>
+              <circle cx="38" cy="42" r="8.5" fill="#78716c" opacity="0.68"/>
+              <circle cx="36" cy="40" r="5" fill="#a8a29e" opacity="0.55"/>
+              <circle cx="84" cy="46" r="6.5" fill="#78716c" opacity="0.62"/>
+              <circle cx="77" cy="82" r="8" fill="#57534e" opacity="0.58"/>
+              <circle cx="37" cy="78" r="5.5" fill="#57534e" opacity="0.52"/>
+              <ellipse cx="44" cy="30" rx="13" ry="6.5" transform="rotate(-24 44 30)" fill="rgba(255,255,255,0.48)"/>
+              <circle cx="48" cy="59" r="4.2" fill="#1c1917"/>
+              <circle cx="49.5" cy="57.5" r="1.5" fill="#fff"/>
+              <circle cx="72" cy="59" r="4.2" fill="#1c1917"/>
+              <circle cx="73.5" cy="57.5" r="1.5" fill="#fff"/>
+              <ellipse cx="40" cy="66" rx="4.5" ry="2.8" fill="#fb7185" opacity="0.55"/>
+              <ellipse cx="80" cy="66" rx="4.5" ry="2.8" fill="#fb7185" opacity="0.55"/>
+              <path d="M 53 68 Q 60 75 67 68" fill="none" stroke="#1c1917" stroke-width="3" stroke-linecap="round"/>
+            </svg>`
+        },
+        {
+          id: 'venus',
+          order: 2,
+          name: 'Sao Kim',
+          color: '#fbbf24',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-venus" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#fef08a"/>
+                  <stop offset="48%" stop-color="#f59e0b"/>
+                  <stop offset="100%" stop-color="#b45309"/>
+                </radialGradient>
+                <clipPath id="${p}-clip-venus"><circle cx="60" cy="60" r="45"/></clipPath>
+              </defs>
+              <circle cx="60" cy="60" r="45" fill="url(#${p}-grad-venus)" stroke="#fef08a" stroke-width="2.2"/>
+              <g clip-path="url(#${p}-clip-venus)" opacity="0.46">
+                <path d="M 8 42 Q 45 28 115 44" fill="none" stroke="#fef9c3" stroke-width="9" stroke-linecap="round"/>
+                <path d="M 8 76 Q 62 92 115 72" fill="none" stroke="#fde047" stroke-width="8" stroke-linecap="round"/>
+                <path d="M 10 92 Q 58 80 112 95" fill="none" stroke="#92400e" stroke-width="6"/>
+              </g>
+              <ellipse cx="44" cy="30" rx="14" ry="7" transform="rotate(-24 44 30)" fill="rgba(255,255,255,0.5)"/>
+              <circle cx="48" cy="59" r="4.3" fill="#451a03"/>
+              <circle cx="49.5" cy="57.5" r="1.5" fill="#fff"/>
+              <circle cx="72" cy="59" r="4.3" fill="#451a03"/>
+              <circle cx="73.5" cy="57.5" r="1.5" fill="#fff"/>
+              <ellipse cx="39" cy="66" rx="5" ry="3" fill="#f43f5e" opacity="0.5"/>
+              <ellipse cx="81" cy="66" rx="5" ry="3" fill="#f43f5e" opacity="0.5"/>
+              <path d="M 52 67 Q 60 76 68 67" fill="none" stroke="#451a03" stroke-width="3" stroke-linecap="round"/>
+            </svg>`
+        },
+        {
+          id: 'earth',
+          order: 3,
+          name: 'Trái Đất',
+          color: '#38bdf8',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-earth" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#7dd3fc"/>
+                  <stop offset="48%" stop-color="#0284c7"/>
+                  <stop offset="100%" stop-color="#1e3a8a"/>
+                </radialGradient>
+                <clipPath id="${p}-clip-earth"><circle cx="60" cy="60" r="46"/></clipPath>
+              </defs>
+              <circle cx="60" cy="60" r="46" fill="url(#${p}-grad-earth)" stroke="#bae6fd" stroke-width="2.4"/>
+              <g clip-path="url(#${p}-clip-earth)">
+                <path d="M 18 38 Q 36 24 52 36 Q 58 46 44 54 Q 30 60 20 50 Z" fill="#4ade80"/>
+                <path d="M 68 25 Q 92 22 102 42 Q 96 58 80 54 Q 68 48 68 25 Z" fill="#22c55e"/>
+                <path d="M 55 76 Q 74 70 90 84 Q 82 104 60 100 Q 48 92 55 76 Z" fill="#4ade80"/>
+                <path d="M 18 76 Q 34 72 40 88 Q 28 100 16 92 Z" fill="#22c55e"/>
+                <ellipse cx="42" cy="34" rx="12" ry="4.5" fill="rgba(255,255,255,0.78)"/>
+                <ellipse cx="83" cy="70" rx="13" ry="4.5" fill="rgba(255,255,255,0.72)"/>
+              </g>
+              <ellipse cx="43" cy="30" rx="13" ry="6.5" transform="rotate(-25 43 30)" fill="rgba(255,255,255,0.45)"/>
+              <circle cx="48" cy="59" r="4.3" fill="#0f172a"/>
+              <circle cx="49.5" cy="57.5" r="1.5" fill="#fff"/>
+              <circle cx="72" cy="59" r="4.3" fill="#0f172a"/>
+              <circle cx="73.5" cy="57.5" r="1.5" fill="#fff"/>
+              <ellipse cx="39" cy="66" rx="5" ry="3" fill="#fb7185" opacity="0.65"/>
+              <ellipse cx="81" cy="66" rx="5" ry="3" fill="#fb7185" opacity="0.65"/>
+              <path d="M 52 67 Q 60 76 68 67" fill="none" stroke="#0f172a" stroke-width="3.1" stroke-linecap="round"/>
+            </svg>`
+        },
+        {
+          id: 'mars',
+          order: 4,
+          name: 'Sao Hỏa',
+          color: '#f97316',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-mars" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#fdba74"/>
+                  <stop offset="45%" stop-color="#ef4444"/>
+                  <stop offset="100%" stop-color="#991b1b"/>
+                </radialGradient>
+                <clipPath id="${p}-clip-mars"><circle cx="60" cy="60" r="44"/></clipPath>
+              </defs>
+              <circle cx="60" cy="60" r="44" fill="url(#${p}-grad-mars)" stroke="#fecaca" stroke-width="2.2"/>
+              <g clip-path="url(#${p}-clip-mars)">
+                <ellipse cx="60" cy="18" rx="18" ry="6" fill="#fff7ed" opacity="0.82"/>
+                <circle cx="34" cy="46" r="9" fill="#b91c1c" opacity="0.45"/>
+                <circle cx="85" cy="76" r="10" fill="#7f1d1d" opacity="0.45"/>
+                <circle cx="82" cy="42" r="5" fill="#b91c1c" opacity="0.4"/>
+              </g>
+              <ellipse cx="43" cy="30" rx="12" ry="6" transform="rotate(-24 43 30)" fill="rgba(255,255,255,0.42)"/>
+              <circle cx="48" cy="59" r="4.2" fill="#450a0a"/>
+              <circle cx="49.5" cy="57.5" r="1.5" fill="#fff"/>
+              <circle cx="72" cy="59" r="4.2" fill="#450a0a"/>
+              <circle cx="73.5" cy="57.5" r="1.5" fill="#fff"/>
+              <ellipse cx="39" cy="66" rx="4.8" ry="2.8" fill="#fde047" opacity="0.48"/>
+              <ellipse cx="81" cy="66" rx="4.8" ry="2.8" fill="#fde047" opacity="0.48"/>
+              <path d="M 53 68 Q 60 75 67 68" fill="none" stroke="#450a0a" stroke-width="3" stroke-linecap="round"/>
+            </svg>`
+        },
+        {
+          id: 'jupiter',
+          order: 5,
+          name: 'Sao Mộc',
+          color: '#fb923c',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-jupiter" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#ffedd5"/>
+                  <stop offset="55%" stop-color="#ea9a5d"/>
+                  <stop offset="100%" stop-color="#9a3412"/>
+                </radialGradient>
+                <clipPath id="${p}-clip-jupiter"><circle cx="60" cy="60" r="48"/></clipPath>
+              </defs>
+              <circle cx="60" cy="60" r="48" fill="url(#${p}-grad-jupiter)" stroke="#fed7aa" stroke-width="2.4"/>
+              <g clip-path="url(#${p}-clip-jupiter)">
+                <rect x="8" y="24" width="104" height="10" fill="#c2410c" opacity="0.52"/>
+                <rect x="8" y="40" width="104" height="8" fill="#fef3c7" opacity="0.62"/>
+                <rect x="8" y="54" width="104" height="11" fill="#d97706" opacity="0.4"/>
+                <rect x="8" y="72" width="104" height="9" fill="#9a3412" opacity="0.48"/>
+                <rect x="8" y="88" width="104" height="9" fill="#fde68a" opacity="0.5"/>
+                <ellipse cx="82" cy="76" rx="13" ry="8" fill="#dc2626" stroke="#fca5a5" stroke-width="2"/>
+                <ellipse cx="82" cy="76" rx="7" ry="4" fill="#ef4444"/>
+              </g>
+              <ellipse cx="43" cy="28" rx="15" ry="7" transform="rotate(-24 43 28)" fill="rgba(255,255,255,0.44)"/>
+              <circle cx="47" cy="57" r="4.4" fill="#431407"/>
+              <circle cx="48.5" cy="55.5" r="1.6" fill="#fff"/>
+              <circle cx="71" cy="57" r="4.4" fill="#431407"/>
+              <circle cx="72.5" cy="55.5" r="1.6" fill="#fff"/>
+              <ellipse cx="38" cy="64" rx="5" ry="3" fill="#fb7185" opacity="0.55"/>
+              <ellipse cx="80" cy="64" rx="5" ry="3" fill="#fb7185" opacity="0.55"/>
+              <path d="M 52 65 Q 59 73 66 65" fill="none" stroke="#431407" stroke-width="3.2" stroke-linecap="round"/>
+            </svg>`
+        },
+        {
+          id: 'saturn',
+          order: 6,
+          name: 'Sao Thổ',
+          color: '#fde047',
+          svg: (p) => `
+            <svg viewBox="0 0 140 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-saturn" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#fef9c3"/>
+                  <stop offset="55%" stop-color="#eab308"/>
+                  <stop offset="100%" stop-color="#a16207"/>
+                </radialGradient>
+                <linearGradient id="${p}-grad-saturn-ring" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#fde68a"/>
+                  <stop offset="30%" stop-color="#f59e0b"/>
+                  <stop offset="65%" stop-color="#fef08a"/>
+                  <stop offset="100%" stop-color="#d97706"/>
+                </linearGradient>
+                <clipPath id="${p}-clip-saturn"><circle cx="70" cy="60" r="36"/></clipPath>
+              </defs>
+              <g transform="rotate(-18 70 60)">
+                <path d="M 6 60 A 64 19 0 0 1 134 60" fill="none" stroke="url(#${p}-grad-saturn-ring)" stroke-width="11" stroke-linecap="round" opacity="0.88"/>
+                <path d="M 14 60 A 56 15 0 0 1 126 60" fill="none" stroke="#fef9c3" stroke-width="3" opacity="0.72"/>
+              </g>
+              <circle cx="70" cy="60" r="36" fill="url(#${p}-grad-saturn)" stroke="#fef08a" stroke-width="2"/>
+              <g clip-path="url(#${p}-clip-saturn)" opacity="0.35">
+                <rect x="28" y="38" width="84" height="7" fill="#ca8a04"/>
+                <rect x="28" y="54" width="84" height="6" fill="#fef9c3"/>
+                <rect x="28" y="72" width="84" height="8" fill="#854d0e"/>
+              </g>
+              <ellipse cx="56" cy="38" rx="11" ry="5.5" transform="rotate(-24 56 38)" fill="rgba(255,255,255,0.48)"/>
+              <circle cx="59" cy="56" r="3.8" fill="#422006"/>
+              <circle cx="60.3" cy="54.7" r="1.3" fill="#fff"/>
+              <circle cx="81" cy="56" r="3.8" fill="#422006"/>
+              <circle cx="82.3" cy="54.7" r="1.3" fill="#fff"/>
+              <ellipse cx="52" cy="62" rx="4.2" ry="2.4" fill="#fb7185" opacity="0.55"/>
+              <ellipse cx="88" cy="62" rx="4.2" ry="2.4" fill="#fb7185" opacity="0.55"/>
+              <path d="M 64 63 Q 70 69 76 63" fill="none" stroke="#422006" stroke-width="2.7" stroke-linecap="round"/>
+              <g transform="rotate(-18 70 60)">
+                <path d="M 6 60 A 64 19 0 0 0 134 60" fill="none" stroke="url(#${p}-grad-saturn-ring)" stroke-width="11" stroke-linecap="round"/>
+                <path d="M 14 60 A 56 15 0 0 0 126 60" fill="none" stroke="#fef9c3" stroke-width="3" opacity="0.88"/>
+              </g>
+            </svg>`
+        },
+        {
+          id: 'uranus',
+          order: 7,
+          name: 'Sao Thiên Vương',
+          color: '#22d3ee',
+          svg: (p) => `
+            <svg viewBox="0 0 130 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-uranus" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#cffafe"/>
+                  <stop offset="50%" stop-color="#22d3ee"/>
+                  <stop offset="100%" stop-color="#0e7490"/>
+                </radialGradient>
+              </defs>
+              <g transform="rotate(28 65 60)">
+                <path d="M 12 60 A 53 13 0 0 1 118 60" fill="none" stroke="#a5f3fc" stroke-width="4.5" opacity="0.82"/>
+              </g>
+              <circle cx="65" cy="60" r="40" fill="url(#${p}-grad-uranus)" stroke="#cffafe" stroke-width="2.2"/>
+              <ellipse cx="50" cy="34" rx="12" ry="6" transform="rotate(-24 50 34)" fill="rgba(255,255,255,0.52)"/>
+              <circle cx="54" cy="58" r="4" fill="#083344"/>
+              <circle cx="55.4" cy="56.6" r="1.4" fill="#fff"/>
+              <circle cx="76" cy="58" r="4" fill="#083344"/>
+              <circle cx="77.4" cy="56.6" r="1.4" fill="#fff"/>
+              <ellipse cx="46" cy="65" rx="4.5" ry="2.6" fill="#f472b6" opacity="0.55"/>
+              <ellipse cx="84" cy="65" rx="4.5" ry="2.6" fill="#f472b6" opacity="0.55"/>
+              <path d="M 58 66 Q 65 73 72 66" fill="none" stroke="#083344" stroke-width="2.9" stroke-linecap="round"/>
+              <g transform="rotate(28 65 60)">
+                <path d="M 12 60 A 53 13 0 0 0 118 60" fill="none" stroke="#ecfeff" stroke-width="4.5" opacity="0.92"/>
+              </g>
+            </svg>`
+        },
+        {
+          id: 'neptune',
+          order: 8,
+          name: 'Sao Hải Vương',
+          color: '#3b82f6',
+          svg: (p) => `
+            <svg viewBox="0 0 120 120" class="w-full h-full overflow-visible">
+              <defs>
+                <radialGradient id="${p}-grad-neptune" cx="34%" cy="28%" r="72%">
+                  <stop offset="0%" stop-color="#93c5fd"/>
+                  <stop offset="48%" stop-color="#2563eb"/>
+                  <stop offset="100%" stop-color="#1e1b4b"/>
+                </radialGradient>
+                <clipPath id="${p}-clip-neptune"><circle cx="60" cy="60" r="44"/></clipPath>
+              </defs>
+              <circle cx="60" cy="60" r="44" fill="url(#${p}-grad-neptune)" stroke="#bfdbfe" stroke-width="2.2"/>
+              <g clip-path="url(#${p}-clip-neptune)" opacity="0.48">
+                <path d="M 10 38 Q 55 28 112 42" fill="none" stroke="#93c5fd" stroke-width="6" stroke-linecap="round"/>
+                <path d="M 12 78 Q 62 90 112 74" fill="none" stroke="#60a5fa" stroke-width="5.5" stroke-linecap="round"/>
+                <ellipse cx="80" cy="76" rx="10" ry="5.5" fill="#1d4ed8"/>
+              </g>
+              <ellipse cx="44" cy="30" rx="13" ry="6.5" transform="rotate(-24 44 30)" fill="rgba(255,255,255,0.46)"/>
+              <circle cx="48" cy="59" r="4.2" fill="#0f172a"/>
+              <circle cx="49.5" cy="57.5" r="1.5" fill="#fff"/>
+              <circle cx="72" cy="59" r="4.2" fill="#0f172a"/>
+              <circle cx="73.5" cy="57.5" r="1.5" fill="#fff"/>
+              <ellipse cx="39" cy="66" rx="4.8" ry="2.8" fill="#f472b6" opacity="0.6"/>
+              <ellipse cx="81" cy="66" rx="4.8" ry="2.8" fill="#f472b6" opacity="0.6"/>
+              <path d="M 53 68 Q 60 75 67 68" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+            </svg>`
+        }
+      ];
+
+      /* -----------------------------------------------------------------------
+       * 2. CẤU HÌNH TRẠNG THÁI CHUNG & TRẠNG THÁI ĐỘC LẬP CHO 2 ĐỘI
+       * ----------------------------------------------------------------------- */
+      const TIME_OPTIONS = [60, 120, 180, 300]; // 1 phút, 2 phút, 3 phút, 5 phút
+
+      // 21 đường nối khung xương bàn tay chuẩn giải phẫu MediaPipe
+      const HAND_CONNECTIONS = [
+        [0, 1], [1, 2], [2, 3], [3, 4],           // Ngón cái
+        [0, 5], [5, 6], [6, 7], [7, 8],           // Ngón trỏ
+        [5, 9], [9, 10], [10, 11], [11, 12],      // Ngón giữa
+        [9, 13], [13, 14], [14, 15], [15, 16],    // Ngón áp út
+        [13, 17], [0, 17], [17, 18], [18, 19], [19, 20] // Ngón út & lòng bàn tay
+      ];
+
+      // Tham số bộ lọc làm mượt thích ứng (ổn định khi đứng yên, bám rất nhanh khi di chuyển)
+      const SMOOTH_PRESETS = {
+        fast:     { minAlpha: 0.36, maxAlpha: 0.94, speedScale: 0.046 },
+        balanced: { minAlpha: 0.24, maxAlpha: 0.88, speedScale: 0.036 },
+        smooth:   { minAlpha: 0.14, maxAlpha: 0.78, speedScale: 0.028 }
+      };
+
+      function createTeamState(id, name, accentHex, glowRgba) {
+        return {
+          id,
+          name,
+          accentHex,
+          glowRgba,
+          score: 0,
+          correctCount: 0,
+          finishElapsedSec: null,
+          lastScoreTimestamp: Infinity,
+          panelBounds: { left: 0, right: 0, top: 0, bottom: 0 },
+          slots: [],
+          planets: [],
+          hoveredSlot: null,
+          activeDrag: null, // { planet, source: 'ar'|'pointer', pointerId, offsetX, offsetY }
+          hand: {
+            detected: false,
+            lastSeenTime: 0,
+            landmarks: null,       // 21 điểm gốc chuẩn hóa (0..1)
+            screenPoints: null,    // 21 điểm tọa độ màn hình (px)
+            rawX: 0,
+            rawY: 0,
+            rawThumbX: 0,
+            rawThumbY: 0,
+            palmX: 0,
+            palmY: 0,
+            handScale: 90,
+            cursorX: 0,
+            cursorY: 0,
+            thumbX: 0,
+            thumbY: 0,
+            pinchRatio: 1.0,
+            fistScore: 0.0,        // 0 = xòe 5 ngón, 1 = nắm chặt tay
+            extendedCount: 5,
+            fingers: { thumb: true, index: true, middle: true, ring: true, pinky: true },
+            isGrabbing: false,
+            grabFrames: 0,
+            releaseFrames: 0,
+            graceHolding: false,
+            gestureStatus: 'none', // 'none' | 'detected' | 'selected' | 'dragging' | 'dropped'
+            droppedUntil: 0,
+            teamLocked: false,
+            lockedAnchorX: null,
+            // Ngưỡng cá nhân hóa sau khi hiệu chỉnh riêng từng đội
+            customFistGrab: null,
+            customFistRelease: null,
+            customPinchGrab: null,
+            customPinchRelease: null
+          }
+        };
+      }
+
+      const state = {
+        planetCount: 8,         // 8 hoặc 4 hành tinh
+        timeOptionIndex: 1,     // Mặc định 120 giây (2 phút)
+        remainingSeconds: 120,
+        timerStarted: false,
+        timerInterval: null,
+        matchEnded: false,
+        soundEnabled: true,
+
+        // Gợi ý 3 giây
+        hintActive: false,
+        hintTimeout: null,
+        hintCountdownInterval: null,
+
+        // Cấu hình độ nhạy AI 5 ngón (Mặc định: NẮM–XÒE + Chế độ bàn tay nhỏ trẻ 5–6 tuổi)
+        aiConfig: {
+          gestureMode: 'fist',     // 'fist' (Nắm-Xòe) | 'pinch' (Chụm-Thả)
+          showSkeleton: true,      // Hiển thị khung xương 21 điểm khớp màu cyan phát sáng
+          childSmallHandMode: true,// Chế độ bàn tay nhỏ trẻ 5–6 tuổi
+          camQuality: 'fast360',   // 'fast360' (640x360) | 'lite270' (480x270 cho máy yếu)
+          sensitivityLevel: 80,    // 20..100 (mặc định 80 = Cao)
+          smoothPreset: 'balanced',
+          hitMarginPx: 40,
+          magnetSnapMultiplier: 1.80,
+          dragLossGraceMs: 650,
+          idleLossGraceMs: 260,
+          calibrationTarget: 'both', // 'both' | 'mars' | 'saturn'
+          calibration: {
+            active: false,
+            target: 'both',
+            phase: 'idle',         // 'open' | 'closed'
+            phaseStart: 0,
+            samples: {
+              mars: { openFist: [], closedFist: [], openPinch: [], closedPinch: [], anchorX: [] },
+              saturn: { openFist: [], closedFist: [], openPinch: [], closedPinch: [], anchorX: [] }
+            }
+          }
+        },
+
+        // Trạng thái 2 đội hoạt động hoàn toàn độc lập
+        teams: {
+          mars: createTeamState('mars', 'ĐỘI SAO HỎA', '#fb7185', 'rgba(244, 63, 94, 0.55)'),
+          saturn: createTeamState('saturn', 'ĐỘI SAO THỔ', '#38bdf8', 'rgba(56, 189, 248, 0.55)')
+        },
+
+        // Trạng thái AI Webcam + MediaPipe HandLandmarker (ưu tiên GPU chế độ VIDEO)
+        ar: {
+          running: false,
+          engine: 'none',          // 'tasks-vision' | 'legacy-hands'
+          delegate: 'GPU',
+          landmarker: null,
+          handsInstance: null,
+          mediaStream: null,
+          sendingFrame: false,
+          lastVideoTime: -1,
+          rafId: null,
+          detectedHandsCount: 0,
+          rawLandmarks: [],        // Lưu landmarks mới nhất để vẽ khung xem nhỏ
+          overlapPaused: false,
+          overlapSince: 0,
+          lastError: '',
+          fps: 0,
+          fpsFrames: 0,
+          fpsLastTime: 0,
+          lastInferMs: 0,
+          lastDetectTs: 0,
+          nextInferAt: 0,
+          lastBgDraw: 0,
+          lastMiniDraw: 0,
+          lastUiTelemetryUpdate: 0
+        },
+
+        // Hiệu ứng nền & pháo hoa
+        bgStars: [],
+        particles: [],
+        fireworkTimer: null
+      };
+
+      /* Tham chiếu DOM */
+      const dom = {
+        video: document.getElementById('webcam-video'),
+        bgCanvas: document.getElementById('bg-stars-canvas'),
+        fxCanvas: document.getElementById('fx-canvas'),
+        planetsLayer: document.getElementById('planets-layer'),
+
+        scoreMars: document.getElementById('score-mars'),
+        scoreSaturn: document.getElementById('score-saturn'),
+        progressMars: document.getElementById('progress-mars'),
+        progressSaturn: document.getElementById('progress-saturn'),
+        countdownDisplay: document.getElementById('countdown-display'),
+        timerBox: document.getElementById('timer-box'),
+
+        panelMars: document.getElementById('panel-mars'),
+        panelSaturn: document.getElementById('panel-saturn'),
+        slotsMars: document.getElementById('slots-mars'),
+        slotsSaturn: document.getElementById('slots-saturn'),
+        trayMars: document.getElementById('tray-mars'),
+        traySaturn: document.getElementById('tray-saturn'),
+
+        aiStatusDot: document.getElementById('ai-status-dot'),
+        aiStatusText: document.getElementById('ai-status-text'),
+        aiTelemetryBadge: document.getElementById('ai-telemetry-badge'),
+        aiHandsCount: document.getElementById('ai-hands-count'),
+        aiFpsValue: document.getElementById('ai-fps-value'),
+        handOverlapWarning: document.getElementById('hand-overlap-warning'),
+        handOverlapText: document.getElementById('hand-overlap-text'),
+
+        btnAiSettings: document.getElementById('btn-ai-settings'),
+        aiSettingsPanel: document.getElementById('ai-settings-panel'),
+        btnCloseAiSettings: document.getElementById('btn-close-ai-settings'),
+        miniHandPreview: document.getElementById('mini-hand-preview'),
+        miniPreviewPlaceholder: document.getElementById('mini-preview-placeholder'),
+        panelCamState: document.getElementById('panel-cam-state'),
+        panelHandsState: document.getElementById('panel-hands-state'),
+        panelFpsState: document.getElementById('panel-fps-state'),
+        panelInferMs: document.getElementById('panel-infer-ms'),
+        panelCameraError: document.getElementById('panel-camera-error'),
+        groupCamQuality: document.getElementById('group-cam-quality'),
+
+        gestureBadgeMars: document.getElementById('gesture-badge-mars'),
+        gestureBadgeSaturn: document.getElementById('gesture-badge-saturn'),
+        teamLockMars: document.getElementById('team-lock-mars'),
+        teamLockSaturn: document.getElementById('team-lock-saturn'),
+        fingersMars: document.getElementById('fingers-mars'),
+        fingersSaturn: document.getElementById('fingers-saturn'),
+
+        groupGestureMode: document.getElementById('group-gesture-mode'),
+        gestureModeHint: document.getElementById('gesture-mode-hint'),
+        toggleSkeletonOverlay: document.getElementById('toggle-skeleton-overlay'),
+        toggleChildMode: document.getElementById('toggle-child-mode'),
+        sliderAiSensitivity: document.getElementById('slider-ai-sensitivity'),
+        valAiSensitivity: document.getElementById('val-ai-sensitivity'),
+        groupCursorSmooth: document.getElementById('group-cursor-smooth'),
+        sliderHitMargin: document.getElementById('slider-hit-margin'),
+        valHitMargin: document.getElementById('val-hit-margin'),
+        sliderMagnetSnap: document.getElementById('slider-magnet-snap'),
+        valMagnetSnap: document.getElementById('val-magnet-snap'),
+
+        groupCalibrationTarget: document.getElementById('group-calibration-target'),
+        calibrationThresholdSummary: document.getElementById('calibration-threshold-summary'),
+        calibrationStatusBox: document.getElementById('calibration-status-box'),
+        calibrationStepText: document.getElementById('calibration-step-text'),
+        calibrationProgressBar: document.getElementById('calibration-progress-bar'),
+        btnCalibrateHand: document.getElementById('btn-calibrate-hand'),
+        calibrateBtnLabel: document.getElementById('calibrate-btn-label'),
+        btnResetAiConfig: document.getElementById('btn-reset-ai-config'),
+        btnFallbackMouse: document.getElementById('btn-fallback-mouse'),
+        btnSound: document.getElementById('btn-sound'),
+        soundIcon: document.getElementById('sound-icon'),
+
+        // 7 nút thanh công cụ phía dưới
+        btnToggleAI: document.getElementById('btn-toggle-ai'),
+        aiBtnIcon: document.getElementById('ai-btn-icon'),
+        aiBtnLabel: document.getElementById('ai-btn-label'),
+        btnPlanetCount: document.getElementById('btn-planet-count'),
+        planetCountLabel: document.getElementById('planet-count-label'),
+        btnSelectTime: document.getElementById('btn-select-time'),
+        timeSelectLabel: document.getElementById('time-select-label'),
+        btnHint3s: document.getElementById('btn-hint-3s'),
+        hintBtnLabel: document.getElementById('hint-btn-label'),
+        btnFinishScore: document.getElementById('btn-finish-score'),
+        btnFullscreen: document.getElementById('btn-fullscreen'),
+        fullscreenIcon: document.getElementById('fullscreen-icon'),
+        fullscreenLabel: document.getElementById('fullscreen-label'),
+        btnRestart: document.getElementById('btn-restart'),
+
+        // Modal kết quả & thông báo nổi
+        resultModal: document.getElementById('result-modal'),
+        resultWinnerTitle: document.getElementById('result-winner-title'),
+        resultSubtitle: document.getElementById('result-subtitle'),
+        resultCardMars: document.getElementById('result-card-mars'),
+        resultCardSaturn: document.getElementById('result-card-saturn'),
+        resultScoreMars: document.getElementById('result-score-mars'),
+        resultScoreSaturn: document.getElementById('result-score-saturn'),
+        resultDetailMars: document.getElementById('result-detail-mars'),
+        resultDetailSaturn: document.getElementById('result-detail-saturn'),
+        resultTimeMars: document.getElementById('result-time-mars'),
+        resultTimeSaturn: document.getElementById('result-time-saturn'),
+        btnModalReplay: document.getElementById('btn-modal-replay'),
+        btnModalClose: document.getElementById('btn-modal-close'),
+
+        toastBox: document.getElementById('toast-box'),
+        toastIcon: document.getElementById('toast-icon'),
+        toastMessage: document.getElementById('toast-message'),
+
+        camPermModal: document.getElementById('camera-permission-modal'),
+        camPermTitle: document.getElementById('cam-perm-title'),
+        camPermDesc: document.getElementById('cam-perm-desc'),
+        camPermSteps: document.getElementById('cam-perm-steps'),
+        btnCamPermRetry: document.getElementById('btn-cam-perm-retry'),
+        btnCamPermMouse: document.getElementById('btn-cam-perm-mouse')
+      };
+
+      const bgCtx = dom.bgCanvas.getContext('2d');
+      const fxCtx = dom.fxCanvas.getContext('2d');
+      const miniCtx = dom.miniHandPreview ? dom.miniHandPreview.getContext('2d') : null;
+
+      /* -----------------------------------------------------------------------
+       * 3. ÂM THANH (WEB AUDIO API) & GIỌNG ĐỌC TIẾNG VIỆT
+       * ----------------------------------------------------------------------- */
+      let audioCtx = null;
+      function ensureAudioContext() {
+        try {
+          if (!audioCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) audioCtx = new Ctx();
+          }
+          if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+          }
+        } catch (err) {
+          // Bỏ qua nếu thiết bị hạn chế Web Audio
+        }
+      }
+
+      function playTone(freq, duration, type = 'sine', delay = 0, volume = 0.14, endFreq = null) {
+        if (!state.soundEnabled) return;
+        ensureAudioContext();
+        if (!audioCtx) return;
+        try {
+          const t0 = audioCtx.currentTime + delay;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, t0);
+          if (endFreq) osc.frequency.exponentialRampToValueAtTime(endFreq, t0 + duration);
+          gain.gain.setValueAtTime(0.001, t0);
+          gain.gain.exponentialRampToValueAtTime(volume, t0 + 0.018);
+          gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(t0);
+          osc.stop(t0 + duration + 0.02);
+        } catch (e) {}
+      }
+
+      function sfxPickup() {
+        playTone(460, 0.1, 'sine', 0, 0.12, 680);
+      }
+
+      function sfxCorrect(teamId) {
+        // Tạo cao độ khác nhẹ giữa 2 đội để nghe rất sinh động khi thi đấu song song
+        const shift = teamId === 'mars' ? 1.0 : 1.06;
+        playTone(523.25 * shift, 0.14, 'triangle', 0, 0.16);
+        playTone(659.25 * shift, 0.15, 'triangle', 0.07, 0.16);
+        playTone(783.99 * shift, 0.2, 'sine', 0.14, 0.18);
+        playTone(1046.5 * shift, 0.28, 'sine', 0.21, 0.16);
+      }
+
+      function sfxWrong() {
+        playTone(300, 0.12, 'triangle', 0, 0.12, 220);
+        playTone(220, 0.14, 'sine', 0.09, 0.11, 170);
+      }
+
+      function sfxHint() {
+        playTone(660, 0.12, 'sine', 0, 0.12);
+        playTone(880, 0.18, 'sine', 0.09, 0.14);
+      }
+
+      function sfxVictory() {
+        const notes = [
+          { f: 523.25, t: 0.00, d: 0.14 },
+          { f: 659.25, t: 0.13, d: 0.14 },
+          { f: 783.99, t: 0.26, d: 0.14 },
+          { f: 1046.5, t: 0.39, d: 0.30 },
+          { f: 783.99, t: 0.70, d: 0.14 },
+          { f: 1046.5, t: 0.85, d: 0.55 }
+        ];
+        notes.forEach(n => {
+          playTone(n.f, n.d, 'triangle', n.t, 0.17);
+          playTone(n.f * 0.5, n.d, 'sine', n.t, 0.08);
+        });
+      }
+
+      function speakVietnamese(text) {
+        if (!state.soundEnabled) return;
+        try {
+          if (!('speechSynthesis' in window)) return;
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.lang = 'vi-VN';
+          utter.rate = 1.02;
+          utter.pitch = 1.1;
+          const voices = window.speechSynthesis.getVoices();
+          const vi = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('vi'));
+          if (vi) utter.voice = vi;
+          window.speechSynthesis.speak(utter);
+        } catch (e) {}
+      }
+
+      /* -----------------------------------------------------------------------
+       * 4. THÔNG BÁO NỔI & HIỆU ỨNG CỘNG ĐIỂM
+       * ----------------------------------------------------------------------- */
+      let toastTimer = null;
+      function showToast(msg, icon = '✨', duration = 2800) {
+        dom.toastIcon.textContent = icon;
+        dom.toastMessage.textContent = msg;
+        dom.toastBox.classList.remove('opacity-0', '-translate-y-3');
+        dom.toastBox.classList.add('opacity-100', 'translate-y-0');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          dom.toastBox.classList.remove('opacity-100', 'translate-y-0');
+          dom.toastBox.classList.add('opacity-0', '-translate-y-3');
+        }, duration);
+      }
+
+      function showScorePop(x, y, text = '+10 ⭐') {
+        const el = document.createElement('div');
+        el.className = 'score-pop';
+        el.textContent = text;
+        el.style.left = `${Math.max(60, Math.min(window.innerWidth - 60, x))}px`;
+        el.style.top = `${Math.max(75, y - 34)}px`;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 1300);
+      }
+
+      /* -----------------------------------------------------------------------
+       * 5. XÂY DỰNG BẢNG CHƠI ĐỘC LẬP CHO MỖI ĐỘI (4 HOẶC 8 HÀNH TINH)
+       * ----------------------------------------------------------------------- */
+      function shuffleArray(arr) {
+        const copy = [...arr];
+        for (let i = copy.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
+      }
+
+      function getTeamDOM(teamId) {
+        return teamId === 'mars'
+          ? {
+              panel: dom.panelMars,
+              slotsContainer: dom.slotsMars,
+              trayContainer: dom.trayMars,
+              scoreEl: dom.scoreMars,
+              progressEl: dom.progressMars
+            }
+          : {
+              panel: dom.panelSaturn,
+              slotsContainer: dom.slotsSaturn,
+              trayContainer: dom.traySaturn,
+              scoreEl: dom.scoreSaturn,
+              progressEl: dom.progressSaturn
+            };
+      }
+
+      /** Tạo lưới ô tròn nét đứt và khay hành tinh ngẫu nhiên cho cả 2 đội */
+      function buildBothTeamBoards() {
+        dom.planetsLayer.innerHTML = '';
+        const activePlanets = PLANETS_DATA.slice(0, state.planetCount);
+        const rowsClass = state.planetCount === 4 ? 'grid-rows-1' : 'grid-rows-2';
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          const tDom = getTeamDOM(teamId);
+
+          team.slots = [];
+          team.planets = [];
+          team.hoveredSlot = null;
+          team.activeDrag = null;
+
+          // Cập nhật số hàng lưới ô và khay theo chế độ 4 hoặc 8 hành tinh
+          tDom.slotsContainer.className = `flex-1 h-full min-h-0 grid grid-cols-4 ${rowsClass} gap-x-1.5 gap-y-1 sm:gap-x-2.5 sm:gap-y-1.5 items-center justify-items-center`;
+          tDom.trayContainer.className = `flex-1 min-h-0 w-full grid grid-cols-4 ${rowsClass} gap-1.5 sm:gap-2 items-center justify-items-center`;
+
+          tDom.slotsContainer.innerHTML = '';
+          tDom.trayContainer.innerHTML = '';
+
+          // 1. Tạo các ô tròn nét đứt theo thứ tự 1..4 (hàng 1) và 5..8 (hàng 2)
+          activePlanets.forEach((pData) => {
+            const cell = document.createElement('div');
+            cell.className = 'orbit-slot-cell';
+            cell.dataset.team = teamId;
+            cell.dataset.order = String(pData.order);
+
+            const ring = document.createElement('div');
+            ring.className = 'slot-ring';
+
+            const numEl = document.createElement('span');
+            numEl.className = 'font-display font-extrabold text-xl sm:text-2xl lg:text-3xl text-white/85 pointer-events-none select-none';
+            numEl.textContent = String(pData.order);
+            ring.appendChild(numEl);
+
+            const labelEl = document.createElement('div');
+            labelEl.className = 'slot-label';
+            labelEl.textContent = pData.name;
+
+            cell.appendChild(ring);
+            cell.appendChild(labelEl);
+            tDom.slotsContainer.appendChild(cell);
+
+            team.slots.push({
+              teamId,
+              order: pData.order,
+              data: pData,
+              cellEl: cell,
+              ringEl: ring,
+              numEl,
+              labelEl,
+              cx: 0,
+              cy: 0,
+              radius: 36,
+              filled: false
+            });
+          });
+
+          // 2. Xáo trộn ngẫu nhiên hành tinh riêng cho từng đội vào khay 4x2 (hoặc 4x1)
+          const shuffled = shuffleArray(activePlanets);
+          shuffled.forEach((pData) => {
+            const anchorCell = document.createElement('div');
+            anchorCell.className = 'tray-anchor-cell';
+
+            const pad = document.createElement('div');
+            pad.className = 'tray-anchor-pad flex items-center justify-center';
+            anchorCell.appendChild(pad);
+            tDom.trayContainer.appendChild(anchorCell);
+
+            // Tạo hành tinh kéo thả độc lập của đội này
+            const planetEl = document.createElement('div');
+            planetEl.className = 'planet-item pointer-events-auto';
+            planetEl.dataset.team = teamId;
+            planetEl.dataset.planetId = pData.id;
+
+            const visual = document.createElement('div');
+            visual.className = 'planet-visual';
+            visual.innerHTML = pData.svg(teamId);
+
+            const selectedBadge = document.createElement('span');
+            selectedBadge.className = 'planet-selected-badge';
+            selectedBadge.textContent = '✨ Đã chọn';
+
+            const caption = document.createElement('span');
+            caption.className = 'planet-caption';
+            caption.textContent = pData.name;
+
+            planetEl.appendChild(selectedBadge);
+            planetEl.appendChild(visual);
+            planetEl.appendChild(caption);
+            dom.planetsLayer.appendChild(planetEl);
+
+            const planetObj = {
+              teamId,
+              data: pData,
+              el: planetEl,
+              anchorCell,
+              anchorPad: pad,
+              homeX: 0,
+              homeY: 0,
+              x: 0,
+              y: 0,
+              size: 64,
+              locked: false,
+              slotObj: null
+            };
+
+            // Kéo thả dự phòng bằng chuột / cảm ứng (hỗ trợ đa điểm cho 2 đội cùng lúc!)
+            planetEl.addEventListener('pointerdown', (ev) => onPlanetPointerDown(ev, planetObj));
+            team.planets.push(planetObj);
+          });
+        });
+
+        requestAnimationFrame(() => syncAllPositions(false));
+      }
+
+      /** Tính toán kích thước & căn tọa độ chính xác, đảm bảo hành tinh không bao giờ chồng lấn hay cắt xén */
+      function syncAllPositions(animate = false) {
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          // Lưu cache khung hình chữ nhật của bảng đội để tránh gọi getBoundingClientRect() 60 lần/giây khi kéo
+          const pRect = getTeamDOM(teamId).panel.getBoundingClientRect();
+          team.panelBounds = {
+            left: pRect.left,
+            right: pRect.right,
+            top: pRect.top,
+            bottom: pRect.bottom
+          };
+          if (team.slots.length === 0) return;
+
+          // Đo kích thước 1 ô lưới quỹ đạo thực tế để co giãn hình tròn vừa khít và thật lớn cho trẻ 5-6 tuổi
+          const firstSlotCellRect = team.slots[0].cellEl.getBoundingClientRect();
+          const maxRingW = firstSlotCellRect.width - 8;
+          const maxRingH = firstSlotCellRect.height - 20; // Chừa chỗ gọn cho nhãn tên bên dưới
+          const slotDiameter = Math.max(44, Math.min(108, Math.floor(Math.min(maxRingW, maxRingH))));
+
+          team.slots.forEach((slot) => {
+            slot.ringEl.style.width = `${slotDiameter}px`;
+            slot.ringEl.style.height = `${slotDiameter}px`;
+          });
+
+          // Đo kích thước 1 ô khay phía dưới để hành tinh nằm gọn gàng, không chồng lấn
+          const firstTrayCellRect = team.planets[0].anchorCell.getBoundingClientRect();
+          const maxTrayW = firstTrayCellRect.width - 8;
+          const maxTrayH = firstTrayCellRect.height - 16;
+          const planetSize = Math.max(42, Math.min(98, Math.floor(Math.min(maxTrayW, maxTrayH, slotDiameter * 0.96))));
+
+          team.planets.forEach((p) => {
+            p.size = planetSize;
+            p.el.style.width = `${planetSize}px`;
+            p.el.style.height = `${planetSize}px`;
+            p.anchorPad.style.width = `${planetSize + 6}px`;
+            p.anchorPad.style.height = `${planetSize + 6}px`;
+          });
+
+          // Sau khi áp kích thước CSS, lấy tọa độ tâm chuẩn xác
+          team.slots.forEach((slot) => {
+            const r = slot.ringEl.getBoundingClientRect();
+            slot.cx = r.left + r.width / 2;
+            slot.cy = r.top + r.height / 2;
+            slot.radius = r.width / 2;
+          });
+
+          team.planets.forEach((p) => {
+            const a = p.anchorPad.getBoundingClientRect();
+            p.homeX = a.left + a.width / 2;
+            p.homeY = a.top + a.height / 2;
+
+            if (p.locked && p.slotObj) {
+              setPlanetPosition(p, p.slotObj.cx, p.slotObj.cy, animate);
+            } else if (!team.activeDrag || team.activeDrag.planet !== p) {
+              setPlanetPosition(p, p.homeX, p.homeY, animate);
+            }
+          });
+        });
+      }
+
+      function setPlanetPosition(planet, cx, cy, smooth = false) {
+        planet.x = cx;
+        planet.y = cy;
+        if (smooth) planet.el.classList.add('smooth-move');
+        else planet.el.classList.remove('smooth-move');
+        const tx = cx - planet.size / 2;
+        const ty = cy - planet.size / 2;
+        planet.el.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+      }
+
+      /** Khóa cứng tọa độ hành tinh trong đúng nửa màn hình của đội (không kéo sang đội còn lại) */
+      function clampToTeamBounds(teamId, x, y, halfSize) {
+        let panelRect = state.teams[teamId].panelBounds;
+        if (!panelRect || panelRect.right <= panelRect.left) {
+          panelRect = getTeamDOM(teamId).panel.getBoundingClientRect();
+        }
+        const pad = Math.max(12, halfSize * 0.72);
+        return {
+          x: Math.max(panelRect.left + pad, Math.min(panelRect.right - pad, x)),
+          y: Math.max(panelRect.top + pad, Math.min(panelRect.bottom - pad, y))
+        };
+      }
+
+      /* -----------------------------------------------------------------------
+       * 6. LOGIC KÉO THẢ ĐỘC LẬP CHO MỖI ĐỘI (HỖ TRỢ ĐỒNG THỜI AR + CHUỘT)
+       * ----------------------------------------------------------------------- */
+      /** Tìm hành tinh trong bảng của ĐÚNG ĐỘI ĐÓ tại tọa độ (x, y) với vùng chọn mở rộng linh hoạt */
+      function findTeamPlanetAt(teamId, x, y, extraMargin = null) {
+        const team = state.teams[teamId];
+        const childBonus = state.aiConfig.childSmallHandMode ? 10 : 0;
+        const margin = (extraMargin !== null ? extraMargin : state.aiConfig.hitMarginPx) + childBonus;
+        let best = null;
+        let minDist = Infinity;
+        for (const p of team.planets) {
+          if (p.locked) continue;
+          const d = Math.hypot(x - p.x, y - p.y);
+          // Tăng vùng nhận chọn vô hình xung quanh hành tinh nhưng giữ nguyên kích thước hiển thị
+          const hitR = p.size * 0.56 + margin;
+          if (d <= hitR && d < minDist) {
+            minDist = d;
+            best = p;
+          }
+        }
+        return best;
+      }
+
+      /** Tìm ô trống gần nhất trong bảng của ĐÚNG ĐỘI ĐÓ theo bán kính hỗ trợ hút */
+      function findNearestTeamSlot(teamId, x, y, preferredOrder = null) {
+        const team = state.teams[teamId];
+        const childBonus = state.aiConfig.childSmallHandMode ? 0.12 : 0;
+        const snapMult = state.aiConfig.magnetSnapMultiplier + childBonus;
+        let best = null;
+        let bestScore = Infinity;
+
+        for (const slot of team.slots) {
+          if (slot.filled) continue;
+          const d = Math.hypot(x - slot.cx, y - slot.cy);
+          const snapR = slot.radius * snapMult;
+          if (d <= snapR) {
+            // Ưu tiên nhẹ ô khớp đúng hành tinh khi trẻ đưa sát giữa 2 ô kế nhau
+            const effectiveDist = (preferredOrder !== null && slot.order === preferredOrder) ? d * 0.82 : d;
+            if (effectiveDist < bestScore) {
+              bestScore = effectiveDist;
+              best = slot;
+            }
+          }
+        }
+        return best;
+      }
+
+      function updateTeamHoverSlot(teamId, x, y, preferredOrder = null) {
+        const team = state.teams[teamId];
+        const nextSlot = findNearestTeamSlot(teamId, x, y, preferredOrder);
+        if (team.hoveredSlot && team.hoveredSlot !== nextSlot) {
+          team.hoveredSlot.cellEl.classList.remove('hover-target');
+        }
+        team.hoveredSlot = nextSlot;
+        if (nextSlot) {
+          nextSlot.cellEl.classList.add('hover-target');
+        }
+        return nextSlot;
+      }
+
+      function clearTeamHoverSlot(teamId) {
+        const team = state.teams[teamId];
+        if (team.hoveredSlot) {
+          team.hoveredSlot.cellEl.classList.remove('hover-target');
+          team.hoveredSlot = null;
+        }
+      }
+
+      function startTeamDrag(teamId, planet, source, x, y, pointerId = null) {
+        const team = state.teams[teamId];
+        if (!planet || planet.locked || planet.teamId !== teamId || state.matchEnded) return;
+        if (team.activeDrag) return;
+
+        // Tự động bắt đầu đếm ngược ngay khi có đội đầu tiên chạm/nhặt hành tinh
+        if (!state.timerStarted) {
+          startCountdown();
+        }
+
+        // Khi chọn bằng tay AR, giữ độ lệch ban đầu rất nhẹ và tự cân mượt về tâm con trỏ để không giật
+        const initialOffsetX = source === 'pointer' ? (planet.x - x) : (planet.x - x) * 0.28;
+        const initialOffsetY = source === 'pointer' ? (planet.y - y) : (planet.y - y) * 0.28;
+
+        team.activeDrag = {
+          planet,
+          source,
+          pointerId,
+          offsetX: initialOffsetX,
+          offsetY: initialOffsetY,
+          rawX: x,
+          rawY: y,
+          startX: x,
+          startY: y,
+          movedDist: 0
+        };
+
+        if (source === 'ar') {
+          team.hand.gestureStatus = 'selected';
+        }
+
+        planet.el.classList.remove('smooth-move', 'wiggle');
+        planet.el.classList.add('dragging');
+        sfxPickup();
+        spawnStarBurst(planet.x, planet.y, '#22d3ee', 10);
+
+        const pos = clampToTeamBounds(teamId, x + initialOffsetX, y + initialOffsetY, planet.size / 2);
+        setPlanetPosition(planet, pos.x, pos.y, false);
+        updateTeamHoverSlot(teamId, pos.x, pos.y, planet.data.order);
+      }
+
+      function moveTeamDrag(teamId, x, y) {
+        const team = state.teams[teamId];
+        if (!team.activeDrag) return;
+        const drag = team.activeDrag;
+        const { planet } = drag;
+
+        drag.movedDist = Math.max(drag.movedDist, Math.hypot(x - drag.startX, y - drag.startY));
+        if (drag.source === 'ar') {
+          team.hand.gestureStatus = drag.movedDist > 12 ? 'dragging' : 'selected';
+          // Giảm dần độ lệch tay AR để hành tinh dính chính xác vào tâm con trỏ
+          drag.offsetX *= 0.78;
+          drag.offsetY *= 0.78;
+        }
+        drag.rawX = x + drag.offsetX;
+        drag.rawY = y + drag.offsetY;
+
+        let pos = clampToTeamBounds(teamId, drag.rawX, drag.rawY, planet.size / 2);
+        const nearSlot = updateTeamHoverSlot(teamId, pos.x, pos.y, planet.data.order);
+
+        // Hỗ trợ hút căn giữa ô tự động khi trẻ kéo hành tinh lại gần ô trống
+        if (nearSlot) {
+          const dist = Math.hypot(pos.x - nearSlot.cx, pos.y - nearSlot.cy);
+          const pullRadius = nearSlot.radius * state.aiConfig.magnetSnapMultiplier;
+          const closeness = Math.max(0, 1 - dist / Math.max(1, pullRadius));
+          const isMatching = nearSlot.order === planet.data.order;
+          const pullStrength = (isMatching ? 0.60 : 0.36) * (0.45 + 0.55 * closeness);
+          pos = {
+            x: pos.x + (nearSlot.cx - pos.x) * pullStrength,
+            y: pos.y + (nearSlot.cy - pos.y) * pullStrength
+          };
+        }
+
+        setPlanetPosition(planet, pos.x, pos.y, false);
+      }
+
+      /** Hủy kéo an toàn khi mất nhận diện bàn tay quá lâu (đưa hành tinh về khay, không thả nhầm) */
+      function cancelTeamDragSafely(teamId) {
+        const team = state.teams[teamId];
+        if (!team.activeDrag) return;
+        const { planet } = team.activeDrag;
+        team.activeDrag = null;
+        planet.el.classList.remove('dragging');
+        clearTeamHoverSlot(teamId);
+        setPlanetPosition(planet, planet.homeX, planet.homeY, true);
+      }
+
+      function releaseTeamDrag(teamId) {
+        const team = state.teams[teamId];
+        if (!team.activeDrag) return;
+
+        const { planet, rawX, rawY, source } = team.activeDrag;
+        const activeHover = team.hoveredSlot;
+        team.activeDrag = null;
+        planet.el.classList.remove('dragging');
+
+        if (source === 'ar') {
+          team.hand.gestureStatus = 'dropped';
+          team.hand.droppedUntil = performance.now() + 950;
+        }
+
+        // Ưu tiên ô đang phát sáng hỗ trợ căn giữa hoặc ô gần nhất trong vùng hút
+        const targetSlot =
+          findNearestTeamSlot(teamId, planet.x, planet.y, planet.data.order) ||
+          findNearestTeamSlot(teamId, rawX, rawY, planet.data.order) ||
+          (activeHover && !activeHover.filled ? activeHover : null);
+        clearTeamHoverSlot(teamId);
+
+        if (targetSlot && targetSlot.order === planet.data.order) {
+          // ĐẶT ĐÚNG: +10 điểm, khóa vị trí, hiệu ứng ngôi sao
+          planet.locked = true;
+          planet.slotObj = targetSlot;
+          targetSlot.filled = true;
+          targetSlot.cellEl.classList.add('filled');
+          targetSlot.numEl.style.opacity = '0';
+          planet.el.classList.add('locked');
+
+          setPlanetPosition(planet, targetSlot.cx, targetSlot.cy, true);
+
+          team.score += 10;
+          team.correctCount += 1;
+          team.lastScoreTimestamp = performance.now();
+
+          updateTeamScoreHUD(teamId, true);
+          sfxCorrect(teamId);
+          spawnStarBurst(targetSlot.cx, targetSlot.cy, planet.data.color, 28);
+          showScorePop(targetSlot.cx, targetSlot.cy, '+10 ⭐');
+
+          // Kiểm tra hoàn thành toàn bộ hành tinh
+          if (team.correctCount >= state.planetCount) {
+            const totalDuration = TIME_OPTIONS[state.timeOptionIndex];
+            team.finishElapsedSec = Math.max(1, totalDuration - state.remainingSeconds);
+            finishAndScoreMatch(teamId);
+          }
+        } else {
+          // ĐẶT SAI: rung nhẹ và quay về khay ban đầu để bé thử lại
+          if (targetSlot) {
+            targetSlot.cellEl.classList.remove('wrong-flash');
+            void targetSlot.cellEl.offsetWidth;
+            targetSlot.cellEl.classList.add('wrong-flash');
+            setTimeout(() => targetSlot.cellEl.classList.remove('wrong-flash'), 450);
+          }
+          sfxWrong();
+          planet.el.classList.remove('wiggle');
+          void planet.el.offsetWidth;
+          planet.el.classList.add('wiggle');
+          setPlanetPosition(planet, planet.homeX, planet.homeY, true);
+        }
+      }
+
+      /* Kéo thả bằng chuột & cảm ứng đa điểm (2 đội có thể kéo đồng thời trên bảng tương tác) */
+      function onPlanetPointerDown(ev, planet) {
+        if (state.matchEnded || planet.locked) return;
+        ev.preventDefault();
+        ensureAudioContext();
+        startTeamDrag(planet.teamId, planet, 'pointer', ev.clientX, ev.clientY, ev.pointerId);
+      }
+
+      window.addEventListener('pointermove', (ev) => {
+        ['mars', 'saturn'].forEach((teamId) => {
+          const drag = state.teams[teamId].activeDrag;
+          if (drag && drag.source === 'pointer' && drag.pointerId === ev.pointerId) {
+            ev.preventDefault();
+            moveTeamDrag(teamId, ev.clientX, ev.clientY);
+          }
+        });
+      }, { passive: false });
+
+      function handlePointerUpOrCancel(ev) {
+        ['mars', 'saturn'].forEach((teamId) => {
+          const drag = state.teams[teamId].activeDrag;
+          if (drag && drag.source === 'pointer' && drag.pointerId === ev.pointerId) {
+            releaseTeamDrag(teamId);
+          }
+        });
+      }
+
+      window.addEventListener('pointerup', handlePointerUpOrCancel);
+      window.addEventListener('pointercancel', handlePointerUpOrCancel);
+
+      /* -----------------------------------------------------------------------
+       * 7. HỆ THỐNG AR 5 NGÓN - 21 LANDMARKS (MEDIAPIPE HANDLANDMARKER VIDEO/GPU)
+       *    - Theo dõi đầy đủ 5 ngón tay (Cái, Trỏ, Giữa, Áp út, Út) bằng hình học 21 khớp
+       *    - Hỗ trợ NẮM–XÒE (mặc định) và CHỤM–THẢ, xác nhận nhiều khung hình tránh nhầm
+       *    - Con trỏ neo vào tâm lòng bàn tay cứng để không nhảy khi chuyển xòe <-> nắm
+       *    - Khóa đội sau hiệu chỉnh & cảnh báo tạm dừng khi 2 bàn tay giao nhau
+       * ----------------------------------------------------------------------- */
+      function clampVal(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      /** Tính góc giữa 3 điểm A-B-C (tại đỉnh B, đơn vị độ 0..180) */
+      function computeJointAngleDeg(a, b, c) {
+        const v1x = a.x - b.x;
+        const v1y = a.y - b.y;
+        const v2x = c.x - b.x;
+        const v2y = c.y - b.y;
+        const len1 = Math.hypot(v1x, v1y);
+        const len2 = Math.hypot(v2x, v2y);
+        if (len1 < 1e-4 || len2 < 1e-4) return 180;
+        const cosVal = clampVal((v1x * v2x + v1y * v2y) / (len1 * len2), -1, 1);
+        return (Math.acos(cosVal) * 180) / Math.PI;
+      }
+
+      /** Tính ngưỡng nắm–xòe & chụm–thả dựa trên thanh độ nhạy, chế độ bàn tay nhỏ và hiệu chỉnh riêng */
+      function getTeamGestureThresholds(teamId) {
+        const cfg = state.aiConfig;
+        const hand = state.teams[teamId].hand;
+        const normSens = clampVal((cfg.sensitivityLevel - 20) / 80, 0, 1); // 0 = chặt, 1 = rất nhạy
+        const childOffset = cfg.childSmallHandMode ? 0.05 : 0;
+
+        // Ngưỡng NẮM–XÒE (fistScore: 0 = xòe 5 ngón, 1 = nắm chặt)
+        // Độ nhạy càng cao -> fistGrab càng thấp (chỉ cần co tay tự nhiên là nắm được)
+        let fistGrab = 0.66 - normSens * 0.19 - childOffset;
+        let fistRelease = fistGrab - 0.16;
+        let isCalibratedFist = false;
+
+        if (hand.customFistGrab !== null && hand.customFistRelease !== null) {
+          fistGrab = hand.customFistGrab;
+          fistRelease = hand.customFistRelease;
+          isCalibratedFist = true;
+        }
+
+        // Ngưỡng CHỤM–THẢ (pinchRatio: khoảng cách cái-trỏ / kích thước lòng bàn tay)
+        let pinchGrab = 0.40 + normSens * 0.24 + childOffset;
+        let pinchRelease = pinchGrab + 0.16;
+        let isCalibratedPinch = false;
+
+        if (hand.customPinchGrab !== null && hand.customPinchRelease !== null) {
+          pinchGrab = hand.customPinchGrab;
+          pinchRelease = hand.customPinchRelease;
+          isCalibratedPinch = true;
+        }
+
+        return {
+          fistGrab: clampVal(fistGrab, 0.34, 0.74),
+          fistRelease: clampVal(fistRelease, 0.20, 0.58),
+          pinchGrab: clampVal(pinchGrab, 0.34, 0.78),
+          pinchRelease: clampVal(pinchRelease, 0.48, 0.94),
+          isCalibrated: cfg.gestureMode === 'fist' ? isCalibratedFist : isCalibratedPinch
+        };
+      }
+
+      function syncAISettingsUI() {
+        const cfg = state.aiConfig;
+
+        // 1. Chế độ cử chỉ NẮM–XÒE / CHỤM–THẢ
+        dom.groupGestureMode.querySelectorAll('button[data-gesture-mode]').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.gestureMode === cfg.gestureMode);
+        });
+        dom.gestureModeHint.textContent = cfg.gestureMode === 'fist'
+          ? 'Xòe di chuyển • Nắm kéo • Mở thả'
+          : 'Đưa tay di chuyển • Chụm kéo • Mở thả';
+
+        // 2. Công tắc khung xương & chế độ bàn tay nhỏ
+        dom.toggleSkeletonOverlay.classList.toggle('on', cfg.showSkeleton);
+        dom.toggleChildMode.classList.toggle('on', cfg.childSmallHandMode);
+        if (dom.groupCamQuality) {
+          dom.groupCamQuality.querySelectorAll('button[data-cam-quality]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.camQuality === cfg.camQuality);
+          });
+        }
+
+        // 3. Thanh độ nhạy nhận diện
+        dom.sliderAiSensitivity.value = String(cfg.sensitivityLevel);
+        const sensLabel = cfg.sensitivityLevel >= 75 ? 'Cao' : (cfg.sensitivityLevel >= 45 ? 'Trung bình' : 'Thấp');
+        dom.valAiSensitivity.textContent = `${sensLabel} (${cfg.sensitivityLevel}%)`;
+
+        // 4. Độ mượt con trỏ
+        dom.groupCursorSmooth.querySelectorAll('button[data-smooth]').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.smooth === cfg.smoothPreset);
+        });
+
+        // 5. Vùng chọn & Hút tâm ô
+        dom.sliderHitMargin.value = String(cfg.hitMarginPx);
+        dom.valHitMargin.textContent = `+${cfg.hitMarginPx}px`;
+        dom.sliderMagnetSnap.value = cfg.magnetSnapMultiplier.toFixed(2);
+        dom.valMagnetSnap.textContent = `${cfg.magnetSnapMultiplier.toFixed(2)}x`;
+
+        // 6. Đối tượng hiệu chỉnh & trạng thái khóa đội
+        dom.groupCalibrationTarget.querySelectorAll('button[data-cal-target]').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.calTarget === cfg.calibrationTarget);
+        });
+
+        dom.teamLockMars.classList.toggle('hidden', !state.teams.mars.hand.teamLocked);
+        dom.teamLockSaturn.classList.toggle('hidden', !state.teams.saturn.hand.teamLocked);
+
+        const mT = getTeamGestureThresholds('mars');
+        const sT = getTeamGestureThresholds('saturn');
+        if (mT.isCalibrated || sT.isCalibrated) {
+          dom.calibrationThresholdSummary.textContent = 'Đã hiệu chỉnh riêng ✓';
+        } else {
+          dom.calibrationThresholdSummary.textContent = cfg.gestureMode === 'fist'
+            ? `Nắm ≥ ${(mT.fistGrab * 100).toFixed(0)}%`
+            : `Chụm ≤ ${mT.pinchGrab.toFixed(2)}`;
+        }
+      }
+
+      function setCameraErrorBox(message = '') {
+        state.ar.lastError = message;
+        if (!message) {
+          dom.panelCameraError.classList.add('hidden');
+          dom.panelCameraError.textContent = '';
+        } else {
+          dom.panelCameraError.classList.remove('hidden');
+          dom.panelCameraError.textContent = `⚠️ ${message}`;
+        }
+      }
+
+      function updateOverlapWarningUI(active, text = '') {
+        if (active) {
+          if (text) dom.handOverlapText.textContent = text;
+          dom.handOverlapWarning.classList.remove('hidden');
+        } else {
+          dom.handOverlapWarning.classList.add('hidden');
+        }
+      }
+
+      function updateAIStatusUI(mode, text) {
+        dom.aiStatusText.textContent = text;
+        dom.aiStatusDot.className = 'w-2.5 h-2.5 rounded-full shrink-0';
+        if (mode === 'active') {
+          dom.aiStatusDot.classList.add('bg-emerald-400', 'animate-pulse');
+          dom.aiTelemetryBadge.classList.remove('hidden');
+          dom.aiTelemetryBadge.classList.add('flex');
+          dom.miniPreviewPlaceholder.classList.add('hidden');
+          dom.panelCamState.textContent = state.ar.delegate === 'GPU' ? 'Camera: Bật (GPU)' : 'Camera: Bật (CPU)';
+          dom.panelCamState.className = 'absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-emerald-400/50 text-[10px] font-extrabold text-emerald-300';
+          dom.aiBtnIcon.textContent = '🟢';
+          dom.aiBtnLabel.textContent = 'AI – 2 bàn tay: BẬT';
+          dom.btnToggleAI.classList.remove('from-emerald-400', 'to-emerald-600');
+          dom.btnToggleAI.classList.add('from-lime-300', 'to-emerald-500');
+        } else if (mode === 'loading') {
+          dom.aiStatusDot.classList.add('bg-amber-400', 'animate-ping');
+          dom.aiTelemetryBadge.classList.add('hidden');
+          dom.panelCamState.textContent = 'Camera: Đang khởi tạo...';
+          dom.panelCamState.className = 'absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-amber-400/50 text-[10px] font-extrabold text-amber-300';
+          dom.aiBtnIcon.textContent = '⏳';
+          dom.aiBtnLabel.textContent = 'Đang bật AI...';
+        } else {
+          dom.aiStatusDot.classList.add('bg-sky-400');
+          dom.aiTelemetryBadge.classList.add('hidden');
+          dom.aiTelemetryBadge.classList.remove('flex');
+          dom.miniPreviewPlaceholder.classList.remove('hidden');
+          dom.panelCamState.textContent = 'Camera: Đang tắt';
+          dom.panelCamState.className = 'absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/80 border border-white/15 text-[10px] font-extrabold text-sky-300';
+          dom.panelHandsState.textContent = '0/2 tay';
+          dom.panelFpsState.textContent = '0 FPS';
+          dom.aiBtnIcon.textContent = '📷';
+          dom.aiBtnLabel.textContent = 'Bật AI – 2 bàn tay';
+          dom.btnToggleAI.classList.remove('from-lime-300', 'to-emerald-500');
+          dom.btnToggleAI.classList.add('from-emerald-400', 'to-emerald-600');
+          updateOverlapWarningUI(false);
+          updateTeamGestureBadges(performance.now());
+        }
+      }
+
+      /** Cập nhật nhãn trạng thái (Đã nhận tay / Đang chọn / Đang kéo / Đã thả) và 5 ngón tay trên bảng hiệu chỉnh */
+      function updateTeamGestureBadges(now) {
+        const STATUS_MAP = {
+          none:     { text: 'Chưa nhận tay', cls: 'bg-slate-900/90 text-slate-400 border-white/10' },
+          detected: { text: '✋ Đã nhận tay', cls: 'bg-cyan-950/90 text-cyan-200 border-cyan-400/60' },
+          selected: { text: '✊ Đang chọn',   cls: 'bg-amber-400/95 text-slate-950 border-yellow-100' },
+          dragging: { text: '🚀 Đang kéo',    cls: 'bg-emerald-400/95 text-slate-950 border-emerald-100' },
+          dropped:  { text: '✨ Đã thả',      cls: 'bg-sky-400/95 text-slate-950 border-sky-100' }
+        };
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          const hand = state.teams[teamId].hand;
+          const badgeEl = teamId === 'mars' ? dom.gestureBadgeMars : dom.gestureBadgeSaturn;
+          const fingersBox = teamId === 'mars' ? dom.fingersMars : dom.fingersSaturn;
+
+          let st = 'none';
+          if (hand.detected) {
+            if (hand.gestureStatus === 'dragging') st = 'dragging';
+            else if (hand.gestureStatus === 'selected') st = 'selected';
+            else if (hand.droppedUntil > now) st = 'dropped';
+            else if (hand.isGrabbing) st = 'selected';
+            else st = 'detected';
+          }
+
+          const info = STATUS_MAP[st];
+          badgeEl.textContent = info.text;
+          badgeEl.className = `text-[11px] font-extrabold px-2 py-0.5 rounded-lg text-center mb-1.5 border ${info.cls}`;
+
+          fingersBox.querySelectorAll('.finger-pill').forEach((pill) => {
+            const key = pill.dataset.finger;
+            pill.classList.remove('extended', 'curled');
+            if (hand.detected) {
+              pill.classList.add(hand.fingers[key] ? 'extended' : 'curled');
+            }
+          });
+        });
+      }
+
+      function updateTelemetryDisplay(now) {
+        if (!state.ar.running) return;
+        if (now - state.ar.lastUiTelemetryUpdate < 160) return;
+        state.ar.lastUiTelemetryUpdate = now;
+
+        const count = state.ar.detectedHandsCount;
+        const fps = state.ar.fps;
+        dom.aiHandsCount.textContent = `${count}/2 tay`;
+        dom.aiFpsValue.textContent = `${fps} FPS`;
+        dom.panelHandsState.textContent = `${count}/2 tay`;
+        dom.panelFpsState.textContent = `${fps} FPS`;
+        if (dom.panelInferMs) {
+          dom.panelInferMs.textContent = `AI: ${Math.round(state.ar.lastInferMs)} ms`;
+        }
+
+        if (!dom.aiSettingsPanel.classList.contains('hidden')) {
+          updateTeamGestureBadges(now);
+        }
+      }
+
+      /** Phân tích hình học đầy đủ 21 điểm khớp & 5 ngón tay (Cái, Trỏ, Giữa, Áp út, Út) */
+      function extractHandCandidate(lm, w, h) {
+        // Quy đổi toàn bộ 21 landmarks sang tọa độ màn hình phản chiếu (px) để tránh méo tỷ lệ 16:9
+        const pts = new Array(21);
+        for (let i = 0; i < 21; i++) {
+          pts[i] = {
+            x: (1 - lm[i].x) * w,
+            y: lm[i].y * h,
+            z: lm[i].z || 0
+          };
+        }
+
+        const dist2D = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+        // Tâm khung xương lòng bàn tay (cứng, không dịch chuyển khi bé gập 5 ngón thành nắm tay)
+        const palmX =
+          pts[0].x * 0.16 +
+          pts[5].x * 0.28 +
+          pts[9].x * 0.28 +
+          pts[13].x * 0.17 +
+          pts[17].x * 0.11;
+        const palmY =
+          pts[0].y * 0.16 +
+          pts[5].y * 0.28 +
+          pts[9].y * 0.28 +
+          pts[13].y * 0.17 +
+          pts[17].y * 0.11;
+        const palmPt = { x: palmX, y: palmY };
+
+        // Kích thước bàn tay chuẩn hóa (tự thích ứng bàn tay nhỏ trẻ 5-6 tuổi & người lớn)
+        const palmLen = dist2D(pts[0], pts[9]);
+        const palmWidth = dist2D(pts[5], pts[17]);
+        const handScale = Math.max(36, palmLen, palmWidth * 1.16);
+
+        // Đánh giá độ co (0 = duỗi thẳng, 1 = gập chặt) cho 4 ngón chính bằng tỷ lệ khoảng cách + góc khớp PIP
+        const evalMainFinger = (mcpIdx, pipIdx, tipIdx) => {
+          const dTipWrist = dist2D(pts[tipIdx], pts[0]);
+          const dPipWrist = Math.max(1, dist2D(pts[pipIdx], pts[0]));
+          const dTipPalm = dist2D(pts[tipIdx], palmPt);
+          const extRatio = dTipWrist / dPipWrist;
+          const pipAngle = computeJointAngleDeg(pts[mcpIdx], pts[pipIdx], pts[tipIdx]);
+
+          const ratioCurl = clampVal((1.38 - extRatio) / 0.52, 0, 1);
+          const palmCurl = clampVal((1.24 - dTipPalm / handScale) / 0.66, 0, 1);
+          const angleCurl = clampVal((162 - pipAngle) / 84, 0, 1);
+          const curl = ratioCurl * 0.44 + palmCurl * 0.30 + angleCurl * 0.26;
+          return { curl, extended: curl < 0.48 };
+        };
+
+        const indexEval = evalMainFinger(5, 6, 8);
+        const middleEval = evalMainFinger(9, 10, 12);
+        const ringEval = evalMainFinger(13, 14, 16);
+        const pinkyEval = evalMainFinger(17, 18, 20);
+
+        // Đánh giá độ co/duỗi ngón cái dựa trên khoảng cách tới gốc ngón út, gốc ngón trỏ và góc khớp IP
+        const dThumbPinky = dist2D(pts[4], pts[17]) / handScale;
+        const dThumbIndexMcp = dist2D(pts[4], pts[5]) / handScale;
+        const thumbAngle = computeJointAngleDeg(pts[2], pts[3], pts[4]);
+        const thumbCurl =
+          clampVal((1.20 - dThumbPinky) / 0.60, 0, 1) * 0.50 +
+          clampVal((0.72 - dThumbIndexMcp) / 0.42, 0, 1) * 0.30 +
+          clampVal((160 - thumbAngle) / 56, 0, 1) * 0.20;
+        const thumbExtended = thumbCurl < 0.52;
+
+        const fingers = {
+          thumb: thumbExtended,
+          index: indexEval.extended,
+          middle: middleEval.extended,
+          ring: ringEval.extended,
+          pinky: pinkyEval.extended
+        };
+
+        const extendedCount =
+          (fingers.thumb ? 1 : 0) +
+          (fingers.index ? 1 : 0) +
+          (fingers.middle ? 1 : 0) +
+          (fingers.ring ? 1 : 0) +
+          (fingers.pinky ? 1 : 0);
+
+        // Điểm nắm bàn tay liên tục (0 = xòe rộng 5 ngón, 1 = nắm tay hoàn toàn)
+        // Trọng số 4 ngón chính 85% + ngón cái 15% để phù hợp cách nắm tay tự nhiên của trẻ mầm non
+        const fistScore =
+          (indexEval.curl + middleEval.curl + ringEval.curl + pinkyEval.curl) * 0.2125 +
+          thumbCurl * 0.15;
+
+        // Tỷ lệ chụm ngón cái - ngón trỏ (cho chế độ CHỤM–THẢ)
+        const pinchRatio = dist2D(pts[4], pts[8]) / handScale;
+
+        // Tọa độ con trỏ ổn định:
+        // - Chế độ NẮM–XÒE: neo hoàn toàn vào tâm khung xương lòng bàn tay (không nhảy khi xòe <-> nắm!)
+        // - Chế độ CHỤM–THẢ: bám mượt trung điểm ngón cái & ngón trỏ
+        let rawX = palmX;
+        let rawY = palmY;
+        if (state.aiConfig.gestureMode === 'pinch') {
+          const blend = clampVal((0.72 - pinchRatio) * 0.65, 0.12, 0.45);
+          rawX = pts[8].x * (1 - blend) + pts[4].x * blend;
+          rawY = pts[8].y * (1 - blend) + pts[4].y * blend;
+        }
+
+        return {
+          landmarks: lm,
+          screenPoints: pts,
+          palmX,
+          palmY,
+          handScale,
+          rawX,
+          rawY,
+          thumbX: pts[4].x,
+          thumbY: pts[4].y,
+          pinchRatio,
+          fistScore,
+          extendedCount,
+          fingers
+        };
+      }
+
+      /** Phân công ổn định tối đa 2 bàn tay vào 2 đội + khóa đội & phát hiện giao nhau an toàn */
+      function assignHandsToTeams(candidates, halfW) {
+        const assigned = { mars: null, saturn: null, overlap: false, overlapMsg: '' };
+        if (candidates.length === 0) return assigned;
+
+        const mH = state.teams.mars.hand;
+        const sH = state.teams.saturn.hand;
+
+        // Nếu có 2 bàn tay: kiểm tra giao nhau hoặc hai tay chen chung một nửa màn hình
+        if (candidates.length >= 2) {
+          const c0 = candidates[0];
+          const c1 = candidates[1];
+          const pairDist = Math.hypot(c0.palmX - c1.palmX, c0.palmY - c1.palmY);
+          const minSafeDist = Math.max(95, (c0.handScale + c1.handScale) * 0.72);
+          const bothFarLeft = c0.palmX < halfW - 36 && c1.palmX < halfW - 36;
+          const bothFarRight = c0.palmX > halfW + 36 && c1.palmX > halfW + 36;
+
+          if (pairDist < minSafeDist || bothFarLeft || bothFarRight) {
+            assigned.overlap = true;
+            assigned.overlapMsg = bothFarLeft
+              ? 'Cả hai bàn tay đang ở bên Đội Sao Hỏa – Đội Sao Thổ vui lòng lùi sang phải!'
+              : (bothFarRight
+                ? 'Cả hai bàn tay đang ở bên Đội Sao Thổ – Đội Sao Hỏa vui lòng lùi sang trái!'
+                : 'Hai bàn tay đang quá gần hoặc giao nhau – Tạm dừng thao tác để tránh nhầm đội!');
+            return assigned;
+          }
+
+          // Sắp theo vị trí ngang trái -> phải
+          const leftCand = c0.palmX <= c1.palmX ? c0 : c1;
+          const rightCand = c0.palmX <= c1.palmX ? c1 : c0;
+
+          // Nếu hai đội đã theo dõi ổn định trước đó, kiểm tra xem hai tay có bị đảo chéo qua nhau không
+          if (mH.detected && sH.detected) {
+            const directCost = Math.hypot(leftCand.palmX - mH.palmX, leftCand.palmY - mH.palmY)
+              + Math.hypot(rightCand.palmX - sH.palmX, rightCand.palmY - sH.palmY);
+            const crossedCost = Math.hypot(rightCand.palmX - mH.palmX, rightCand.palmY - mH.palmY)
+              + Math.hypot(leftCand.palmX - sH.palmX, leftCand.palmY - sH.palmY);
+
+            // Nếu hai tay vừa đan chéo nhau (crossedCost nhỏ hơn đáng kể), tạm dừng thay vì gán nhầm đội!
+            if (crossedCost + 70 < directCost) {
+              assigned.overlap = true;
+              assigned.overlapMsg = 'Hai bàn tay vừa đan chéo nhau – Tạm dừng để không đổi nhầm đội!';
+              return assigned;
+            }
+          }
+
+          assigned.mars = leftCand;
+          assigned.saturn = rightCand;
+          return assigned;
+        }
+
+        // Trường hợp chỉ có 1 bàn tay trong khung hình
+        const single = candidates[0];
+        const centerBand = Math.max(26, halfW * 0.045);
+
+        if (single.palmX < halfW - centerBand) {
+          assigned.mars = single;
+        } else if (single.palmX > halfW + centerBand) {
+          assigned.saturn = single;
+        } else {
+          // Bàn tay nằm sát đường kẻ dọc giữa: ưu tiên đội đã khóa hoặc đội đang theo dõi liên tục
+          if (mH.teamLocked && !sH.teamLocked) {
+            assigned.mars = single;
+          } else if (sH.teamLocked && !mH.teamLocked) {
+            assigned.saturn = single;
+          } else if (mH.detected && !sH.detected) {
+            assigned.mars = single;
+          } else if (sH.detected && !mH.detected) {
+            assigned.saturn = single;
+          } else {
+            const dM = mH.detected ? Math.hypot(single.palmX - mH.palmX, single.palmY - mH.palmY) : Math.abs(single.palmX - halfW * 0.5);
+            const dS = sH.detected ? Math.hypot(single.palmX - sH.palmX, single.palmY - sH.palmY) : Math.abs(single.palmX - halfW * 1.5);
+            if (dM <= dS) assigned.mars = single;
+            else assigned.saturn = single;
+          }
+        }
+        return assigned;
+      }
+
+      /** Bộ lọc làm mượt thích ứng 60fps: giảm rung khi đứng yên, phản hồi nhanh khi di chuyển */
+      function updateAdaptiveCursor(teamId) {
+        const hand = state.teams[teamId].hand;
+        if (!hand.detected) return;
+
+        const smooth = SMOOTH_PRESETS[state.aiConfig.smoothPreset] || SMOOTH_PRESETS.balanced;
+        const dx = hand.rawX - hand.cursorX;
+        const dy = hand.rawY - hand.cursorY;
+        const speed = Math.hypot(dx, dy);
+
+        // Vùng chết rất nhỏ (1.4px) triệt tiêu rung vi mô khi giữ yên bàn tay
+        if (speed > 1.4) {
+          const adaptiveAlpha = Math.min(smooth.maxAlpha, smooth.minAlpha + speed * smooth.speedScale);
+          hand.cursorX += dx * adaptiveAlpha;
+          hand.cursorY += dy * adaptiveAlpha;
+        }
+
+        hand.thumbX += (hand.rawThumbX - hand.thumbX) * 0.55;
+        hand.thumbY += (hand.rawThumbY - hand.thumbY) * 0.55;
+      }
+
+      /** Xử lý quy trình hiệu chỉnh bàn tay (Xòe 5 ngón -> Nắm tay / Chụm nhẹ) cho từng đội */
+      function processCalibrationStep(assigned, now) {
+        const cal = state.aiConfig.calibration;
+        if (!cal.active) return;
+
+        const OPEN_DURATION = 2800;
+        const CLOSED_DURATION = 3200;
+        const elapsed = now - cal.phaseStart;
+        const targetTeams = cal.target === 'both' ? ['mars', 'saturn'] : [cal.target];
+
+        if (cal.phase === 'open') {
+          targetTeams.forEach((teamId) => {
+            const c = assigned[teamId];
+            if (c) {
+              cal.samples[teamId].openFist.push(c.fistScore);
+              cal.samples[teamId].openPinch.push(c.pinchRatio);
+              cal.samples[teamId].anchorX.push(c.palmX);
+            }
+          });
+          dom.calibrationProgressBar.style.width = `${Math.min(100, (elapsed / OPEN_DURATION) * 100)}%`;
+
+          if (elapsed >= OPEN_DURATION) {
+            cal.phase = 'closed';
+            cal.phaseStart = now;
+            const actionName = state.aiConfig.gestureMode === 'fist'
+              ? 'NẮM CHẶT bàn tay vài lần'
+              : 'CHỤM NHẸ ngón cái & ngón trỏ vài lần';
+            dom.calibrationStepText.textContent = `Bước 2/2: Cho bé ${actionName}...`;
+            dom.calibrationProgressBar.style.width = '0%';
+            sfxHint();
+          }
+        } else if (cal.phase === 'closed') {
+          targetTeams.forEach((teamId) => {
+            const c = assigned[teamId];
+            if (c) {
+              cal.samples[teamId].closedFist.push(c.fistScore);
+              cal.samples[teamId].closedPinch.push(c.pinchRatio);
+            }
+          });
+          dom.calibrationProgressBar.style.width = `${Math.min(100, (elapsed / CLOSED_DURATION) * 100)}%`;
+
+          if (elapsed >= CLOSED_DURATION) {
+            finishHandCalibration();
+          }
+        }
+      }
+
+      async function startHandCalibration() {
+        ensureAudioContext();
+        const cal = state.aiConfig.calibration;
+        if (cal.active) {
+          cancelHandCalibration();
+          return;
+        }
+
+        if (!state.ar.running) {
+          await startTwoHandAI();
+          if (!state.ar.running) return;
+        }
+
+        cal.active = true;
+        cal.target = state.aiConfig.calibrationTarget;
+        cal.phase = 'open';
+        cal.phaseStart = performance.now();
+        cal.samples = {
+          mars: { openFist: [], closedFist: [], openPinch: [], closedPinch: [], anchorX: [] },
+          saturn: { openFist: [], closedFist: [], openPinch: [], closedPinch: [], anchorX: [] }
+        };
+
+        const whoText = cal.target === 'mars'
+          ? 'Đội Sao Hỏa (bên trái)'
+          : (cal.target === 'saturn' ? 'Đội Sao Thổ (bên phải)' : 'cả 2 bé');
+
+        dom.calibrationStatusBox.classList.remove('hidden');
+        dom.calibrationStepText.textContent = `Bước 1/2: Cho ${whoText} XÒE RỘNG 5 ngón tay trước camera...`;
+        dom.calibrationProgressBar.style.width = '0%';
+        dom.calibrateBtnLabel.textContent = 'Hủy hiệu chỉnh';
+        sfxHint();
+      }
+
+      function cancelHandCalibration() {
+        const cal = state.aiConfig.calibration;
+        cal.active = false;
+        cal.phase = 'idle';
+        dom.calibrationStatusBox.classList.add('hidden');
+        dom.calibrateBtnLabel.textContent = 'Hiệu chỉnh bàn tay';
+      }
+
+      function finishHandCalibration() {
+        const cal = state.aiConfig.calibration;
+        const targetTeams = cal.target === 'both' ? ['mars', 'saturn'] : [cal.target];
+        const calibratedNames = [];
+
+        targetTeams.forEach((teamId) => {
+          const s = cal.samples[teamId];
+          const hand = state.teams[teamId].hand;
+
+          if (s.openFist.length >= 4 && s.closedFist.length >= 4) {
+            const openSorted = [...s.openFist].sort((a, b) => a - b);
+            const closedSorted = [...s.closedFist].sort((a, b) => a - b);
+            // Trung bình 50% thấp nhất khi xòe và 50% cao nhất khi nắm
+            const openSlice = openSorted.slice(0, Math.max(2, Math.ceil(openSorted.length * 0.55)));
+            const closedSlice = closedSorted.slice(Math.floor(closedSorted.length * 0.45));
+            const avgOpen = openSlice.reduce((a, b) => a + b, 0) / openSlice.length;
+            const avgClosed = closedSlice.reduce((a, b) => a + b, 0) / closedSlice.length;
+            const span = Math.max(0.18, avgClosed - avgOpen);
+
+            hand.customFistGrab = Number(clampVal(avgOpen + span * 0.56, 0.34, 0.74).toFixed(2));
+            hand.customFistRelease = Number(clampVal(avgOpen + span * 0.30, 0.18, hand.customFistGrab - 0.12).toFixed(2));
+
+            // Hiệu chỉnh đồng thời cả ngưỡng chụm-thả
+            const opPinch = [...s.openPinch].sort((a, b) => a - b);
+            const clPinch = [...s.closedPinch].sort((a, b) => a - b);
+            const pOpen = opPinch.slice(Math.floor(opPinch.length * 0.45));
+            const pClosed = clPinch.slice(0, Math.max(2, Math.ceil(clPinch.length * 0.45)));
+            const avgPOpen = pOpen.reduce((a, b) => a + b, 0) / pOpen.length;
+            const avgPClosed = pClosed.reduce((a, b) => a + b, 0) / pClosed.length;
+            const pSpan = Math.max(0.20, avgPOpen - avgPClosed);
+            hand.customPinchGrab = Number(clampVal(avgPClosed + pSpan * 0.42, 0.34, 0.74).toFixed(2));
+            hand.customPinchRelease = Number(clampVal(avgPClosed + pSpan * 0.68, hand.customPinchGrab + 0.12, 0.92).toFixed(2));
+
+            // Khóa quyền điều khiển đội sau hiệu chỉnh
+            hand.teamLocked = true;
+            if (s.anchorX.length > 0) {
+              hand.lockedAnchorX = s.anchorX.reduce((a, b) => a + b, 0) / s.anchorX.length;
+            }
+            calibratedNames.push(state.teams[teamId].name);
+          }
+        });
+
+        cancelHandCalibration();
+        syncAISettingsUI();
+
+        if (calibratedNames.length === 0) {
+          showToast('Chưa nhận đủ hình ảnh bàn tay khi xòe/nắm. Hãy đưa tay vào đúng nửa màn hình và thử lại nhé!', '⚠️', 4000);
+          return;
+        }
+
+        sfxCorrect('mars');
+        showToast(`Đã hiệu chỉnh & khóa quyền điều khiển cho ${calibratedNames.join(' và ')}! 🎯`, '✅', 3800);
+      }
+
+      /** Xử lý thống nhất 21 landmarks của tối đa 2 bàn tay */
+      function processDetectedHands(landmarksList, now) {
+        if (!state.ar.running) return;
+
+        // Đo FPS thực tế
+        state.ar.fpsFrames += 1;
+        if (now - state.ar.fpsLastTime >= 500) {
+          state.ar.fps = Math.round((state.ar.fpsFrames * 1000) / (now - state.ar.fpsLastTime));
+          state.ar.fpsFrames = 0;
+          state.ar.fpsLastTime = now;
+        }
+
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const halfW = w / 2;
+
+        const validList = [];
+        const candidates = [];
+        if (landmarksList && landmarksList.length > 0) {
+          for (const lm of landmarksList) {
+            if (lm && lm.length >= 21) {
+              validList.push(lm);
+              candidates.push(extractHandCandidate(lm, w, h));
+            }
+          }
+        }
+
+        state.ar.rawLandmarks = validList;
+        state.ar.detectedHandsCount = Math.min(2, candidates.length);
+
+        const assigned = assignHandsToTeams(candidates, halfW);
+
+        // Xử lý tạm dừng an toàn khi 2 bàn tay giao nhau / không phân biệt ổn định
+        if (assigned.overlap) {
+          if (!state.ar.overlapPaused) {
+            state.ar.overlapPaused = true;
+            state.ar.overlapSince = now;
+          }
+          updateOverlapWarningUI(true, assigned.overlapMsg);
+          // Giữ trạng thái kéo tạm thời trong thời gian ngắn; nếu giao nhau quá 1.8 giây thì hủy kéo an toàn
+          if (now - state.ar.overlapSince > 1800) {
+            ['mars', 'saturn'].forEach((teamId) => {
+              const team = state.teams[teamId];
+              if (team.activeDrag && team.activeDrag.source === 'ar') {
+                cancelTeamDragSafely(teamId);
+              }
+            });
+          }
+          updateTelemetryDisplay(now);
+          return;
+        } else if (state.ar.overlapPaused) {
+          state.ar.overlapPaused = false;
+          updateOverlapWarningUI(false);
+        }
+
+        // Nếu đang trong bước hiệu chỉnh bàn tay
+        if (state.aiConfig.calibration.active) {
+          processCalibrationStep(assigned, now);
+        }
+
+        const gestureMode = state.aiConfig.gestureMode;
+        const confirmGrabFrames = 2;    // Xác nhận 2 khung hình liên tiếp tránh chọn nhầm
+        const confirmReleaseFrames = 3; // Xác nhận 3 khung hình liên tiếp tránh thả rơi nhầm
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          const hand = team.hand;
+          const detected = assigned[teamId];
+          const thresholds = getTeamGestureThresholds(teamId);
+
+          if (detected) {
+            const justAppeared = !hand.detected;
+            hand.detected = true;
+            hand.graceHolding = false;
+            hand.lastSeenTime = now;
+            hand.landmarks = detected.landmarks;
+            hand.screenPoints = detected.screenPoints;
+            hand.palmX = detected.palmX;
+            hand.palmY = detected.palmY;
+            hand.handScale = detected.handScale;
+            hand.rawX = detected.rawX;
+            hand.rawY = detected.rawY;
+            hand.rawThumbX = detected.thumbX;
+            hand.rawThumbY = detected.thumbY;
+            hand.pinchRatio = detected.pinchRatio;
+            hand.fistScore = detected.fistScore;
+            hand.extendedCount = detected.extendedCount;
+            hand.fingers = detected.fingers;
+
+            if (justAppeared) {
+              hand.cursorX = detected.rawX;
+              hand.cursorY = detected.rawY;
+              hand.thumbX = detected.thumbX;
+              hand.thumbY = detected.thumbY;
+              hand.gestureStatus = 'detected';
+            } else {
+              updateAdaptiveCursor(teamId);
+            }
+
+            // Đánh giá điều kiện NẮM/CHỤM và MỞ/THẢ dựa trên hình học 21 landmarks
+            let wantsGrab = false;
+            let wantsRelease = false;
+
+            if (gestureMode === 'fist') {
+              // Nắm bàn tay: fistScore vượt ngưỡng nắm (hoặc <= 1 ngón duỗi)
+              wantsGrab = detected.fistScore >= thresholds.fistGrab || detected.extendedCount <= 1;
+              // Mở bàn tay: fistScore thấp hơn ngưỡng thả (hoặc >= 4 ngón xòe rộng)
+              wantsRelease = detected.fistScore <= thresholds.fistRelease || detected.extendedCount >= 4;
+            } else {
+              wantsGrab = detected.pinchRatio <= thresholds.pinchGrab;
+              wantsRelease = detected.pinchRatio >= thresholds.pinchRelease;
+            }
+
+            const wasGrabbing = hand.isGrabbing;
+            if (!wasGrabbing) {
+              if (wantsGrab) {
+                hand.grabFrames += 1;
+                hand.releaseFrames = 0;
+                if (hand.grabFrames >= confirmGrabFrames) {
+                  hand.isGrabbing = true;
+                }
+              } else {
+                hand.grabFrames = 0;
+              }
+            } else {
+              if (wantsRelease) {
+                hand.releaseFrames += 1;
+                hand.grabFrames = 0;
+                if (hand.releaseFrames >= confirmReleaseFrames) {
+                  hand.isGrabbing = false;
+                }
+              } else {
+                hand.releaseFrames = 0;
+              }
+            }
+
+            if (!state.matchEnded && !state.aiConfig.calibration.active) {
+              if (hand.isGrabbing) {
+                if (!team.activeDrag) {
+                  const hitPlanet =
+                    findTeamPlanetAt(teamId, hand.cursorX, hand.cursorY) ||
+                    findTeamPlanetAt(teamId, detected.rawX, detected.rawY);
+                  if (hitPlanet) {
+                    startTeamDrag(teamId, hitPlanet, 'ar', hand.cursorX, hand.cursorY);
+                  } else {
+                    hand.gestureStatus = 'selected';
+                  }
+                } else if (team.activeDrag.source === 'ar') {
+                  moveTeamDrag(teamId, hand.cursorX, hand.cursorY);
+                }
+              } else {
+                if (team.activeDrag && team.activeDrag.source === 'ar') {
+                  releaseTeamDrag(teamId);
+                } else if (hand.droppedUntil <= now) {
+                  hand.gestureStatus = 'detected';
+                }
+              }
+            }
+          } else {
+            // Mất nhận diện bàn tay thoáng qua: giữ trạng thái kéo tạm thời, quá thời gian mới hủy an toàn
+            const elapsed = now - hand.lastSeenTime;
+            const isDraggingAR = Boolean(team.activeDrag && team.activeDrag.source === 'ar');
+
+            if (isDraggingAR) {
+              if (elapsed <= state.aiConfig.dragLossGraceMs) {
+                hand.graceHolding = true;
+              } else {
+                hand.detected = false;
+                hand.graceHolding = false;
+                hand.landmarks = null;
+                hand.screenPoints = null;
+                hand.isGrabbing = false;
+                hand.grabFrames = 0;
+                hand.releaseFrames = 0;
+                hand.gestureStatus = 'none';
+                cancelTeamDragSafely(teamId);
+              }
+            } else if (elapsed > state.aiConfig.idleLossGraceMs) {
+              hand.detected = false;
+              hand.graceHolding = false;
+              hand.landmarks = null;
+              hand.screenPoints = null;
+              hand.isGrabbing = false;
+              hand.grabFrames = 0;
+              hand.releaseFrames = 0;
+              hand.gestureStatus = 'none';
+            }
+          }
+        });
+
+        updateTelemetryDisplay(now);
+      }
+
+      /** Khởi tạo MediaPipe Tasks Vision HandLandmarker (chế độ VIDEO, ưu tiên GPU, tự dự phòng CPU) */
+      async function initHandLandmarkerEngine() {
+        if (state.ar.landmarker) {
+          state.ar.engine = 'tasks-vision';
+          return true;
+        }
+
+        // Chờ tối đa 2.5 giây nếu script module MediaPipe Tasks Vision đang tải
+        let waited = 0;
+        while (!window.MediaPipeTasksVision && waited < 2500) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          waited += 100;
+        }
+
+        if (!window.MediaPipeTasksVision) {
+          return false;
+        }
+
+        try {
+          const { FilesetResolver, HandLandmarker } = window.MediaPipeTasksVision;
+          const vision = await FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+          );
+
+          const modelUrl =
+            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+          const commonOptions = {
+            runningMode: 'VIDEO',
+            numHands: 2,
+            minHandDetectionConfidence: 0.45,
+            minHandPresenceConfidence: 0.45,
+            minTrackingConfidence: 0.45
+          };
+
+          try {
+            state.ar.landmarker = await HandLandmarker.createFromOptions(vision, {
+              ...commonOptions,
+              baseOptions: {
+                modelAssetPath: modelUrl,
+                delegate: 'GPU'
+              }
+            });
+            state.ar.delegate = 'GPU';
+          } catch (gpuErr) {
+            state.ar.landmarker = await HandLandmarker.createFromOptions(vision, {
+              ...commonOptions,
+              baseOptions: {
+                modelAssetPath: modelUrl,
+                delegate: 'CPU'
+              }
+            });
+            state.ar.delegate = 'CPU';
+          }
+
+          state.ar.engine = 'tasks-vision';
+          return true;
+        } catch (err) {
+          console.warn('Không thể khởi tạo MediaPipe Tasks Vision HandLandmarker:', err);
+          return false;
+        }
+      }
+
+      /** Kiểm tra trang có đang chạy trong khung nhúng (iframe / Preview) hay không */
+      function isEmbeddedFrame() {
+        try {
+          return window.self !== window.top;
+        } catch (e) {
+          return true;
+        }
+      }
+
+      /** Mở hộp hướng dẫn xử lý quyền Camera rõ ràng, thân thiện */
+      function showCameraHelpModal(title, desc, stepsHtml) {
+        dom.camPermTitle.textContent = title;
+        dom.camPermDesc.textContent = desc;
+        dom.camPermSteps.innerHTML = stepsHtml;
+        dom.camPermModal.classList.remove('hidden');
+      }
+
+      function hideCameraHelpModal() {
+        dom.camPermModal.classList.add('hidden');
+      }
+
+      /** Yêu cầu luồng Webcam có tự động hạ ràng buộc dự phòng nếu thiết bị không khớp độ phân giải */
+      async function acquireCameraStream(isLiteCam) {
+        const preferredConstraints = {
+          video: {
+            facingMode: 'user',
+            width: { ideal: isLiteCam ? 480 : 640 },
+            height: { ideal: isLiteCam ? 270 : 360 },
+            frameRate: { ideal: 30, max: 30 }
+          },
+          audio: false
+        };
+
+        try {
+          return await navigator.mediaDevices.getUserMedia(preferredConstraints);
+        } catch (err) {
+          const isConstraintErr = err && (
+            err.name === 'OverconstrainedError' ||
+            err.name === 'ConstraintNotSatisfiedError' ||
+            err.name === 'AbortError'
+          );
+          if (isConstraintErr) {
+            return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          }
+          throw err;
+        }
+      }
+
+      async function startTwoHandAI() {
+        ensureAudioContext();
+        hideCameraHelpModal();
+        setCameraErrorBox('');
+        updateAIStatusUI('loading', 'Đang mở Camera...');
+        dom.btnToggleAI.disabled = true;
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          dom.btnToggleAI.disabled = false;
+          const msg = 'Trình duyệt cần chạy trên HTTPS hoặc localhost để mở Camera. Vẫn có thể kéo thả bằng chuột!';
+          setCameraErrorBox(msg);
+          updateAIStatusUI('off', 'Chuột / Cảm ứng');
+          showCameraHelpModal(
+            'Không hỗ trợ Webcam trong ngữ cảnh này',
+            msg,
+            '<div>• Hãy lưu file <b>solar_system_ar_game.html</b> về máy và mở trên Chrome / Edge qua <b>localhost</b> hoặc <b>HTTPS</b>.</div>' +
+            '<div>• Ngay lúc này bạn vẫn có thể chơi đầy đủ hai đội bằng <b>Chuột hoặc màn hình cảm ứng</b>.</div>'
+          );
+          return;
+        }
+
+        try {
+          const isLiteCam = state.aiConfig.camQuality === 'lite270';
+          const stream = await acquireCameraStream(isLiteCam);
+
+          state.ar.mediaStream = stream;
+          dom.video.srcObject = stream;
+          await dom.video.play();
+
+          updateAIStatusUI('loading', 'Đang tải AI 21 khớp...');
+
+          let engineReady = await initHandLandmarkerEngine();
+          if (!engineReady && typeof window.Hands !== 'undefined') {
+            if (!state.ar.handsInstance) {
+              const hands = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+              });
+              hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.45,
+                minTrackingConfidence: 0.45
+              });
+              hands.onResults((res) => processDetectedHands(res.multiHandLandmarks || [], performance.now()));
+              state.ar.handsInstance = hands;
+            }
+            state.ar.engine = 'legacy-hands';
+            state.ar.delegate = 'CPU';
+            engineReady = true;
+          }
+
+          if (!engineReady) {
+            throw new Error('NO_MEDIAPIPE_ENGINE');
+          }
+
+          state.ar.running = true;
+          state.ar.lastVideoTime = -1;
+          state.ar.lastDetectTs = 0;
+          state.ar.nextInferAt = 0;
+          state.ar.lastInferMs = 0;
+          state.ar.fpsFrames = 0;
+          state.ar.fpsLastTime = performance.now();
+          state.ar.lastUiTelemetryUpdate = 0;
+          state.ar.overlapPaused = false;
+          document.body.classList.add('ar-active');
+          // Chuyển Canvas về tỷ lệ 1x DPR khi chạy Camera để giảm 4 lần tải GPU
+          resizeCanvases();
+
+          const badgeText = state.ar.delegate === 'GPU' ? 'AI 5 ngón (GPU)' : 'AI 5 ngón (CPU)';
+          updateAIStatusUI('active', badgeText);
+          dom.btnToggleAI.disabled = false;
+
+          runHandDetectionLoop();
+          const modeTip = state.aiConfig.gestureMode === 'fist'
+            ? 'Xòe tay để di chuyển, NẮM TAY chọn hành tinh và MỞ TAY để thả!'
+            : 'Chụm ngón cái & ngón trỏ để chọn hành tinh, mở ngón để thả!';
+          showToast(`AI 5 ngón (21 khớp) đã sẵn sàng! ${modeTip}`, '🖐️', 4200);
+        } catch (err) {
+          // Ghi log cảnh báo nhẹ thay vì console.error khi quyền Camera bị từ chối bởi trình duyệt hoặc khung nhúng
+          const rawMsg = String((err && err.message) || err || '');
+          const rawName = String((err && err.name) || '');
+          console.warn('Camera AR không khả dụng:', rawName || 'Error', rawMsg);
+
+          stopTwoHandAI(true);
+          dom.btnToggleAI.disabled = false;
+
+          const isPermissionDenied =
+            rawName === 'NotAllowedError' ||
+            rawName === 'PermissionDeniedError' ||
+            rawName === 'SecurityError' ||
+            /permission|denied|not allowed|disallowed|policy/i.test(rawMsg);
+
+          const isBusy = rawName === 'NotReadableError' || rawName === 'TrackStartError';
+          const isNotFound = rawName === 'NotFoundError' || rawName === 'DevicesNotFoundError';
+
+          let errMsg = 'Không thể bật Camera AR. Bạn vẫn có thể kéo thả bằng Chuột / Cảm ứng!';
+
+          if (isPermissionDenied) {
+            if (isEmbeddedFrame()) {
+              errMsg = 'Khung xem trước (Preview) hiện chặn quyền Webcam (Permission denied). Hãy tải file HTML và mở trực tiếp bằng Chrome/Edge để dùng AR 2 bàn tay.';
+              showCameraHelpModal(
+                'Khung Preview đang chặn quyền Webcam',
+                'Môi trường xem trước nhúng không cho phép truy cập Camera (Permission denied).',
+                '<div>1️⃣ <b>Để dùng AI nhận diện 2 bàn tay:</b> Tải hoặc lưu file <b>solar_system_ar_game.html</b> về máy, sau đó mở trực tiếp trên <b>Chrome / Edge</b> (hoặc chạy qua localhost/HTTPS) và bấm <b>Cho phép (Allow)</b> khi trình duyệt hỏi quyền Camera.</div>' +
+                '<div>2️⃣ <b>Hoặc kiểm tra quyền trình duyệt:</b> Bấm biểu tượng ổ khóa 🔒 / máy ảnh trên thanh địa chỉ và bật mục <b>Máy ảnh (Camera) → Cho phép</b> rồi bấm Thử lại.</div>' +
+                '<div>3️⃣ <b>Chơi ngay không cần Camera:</b> Nhấn nút bên dưới để kéo thả đồng thời 2 đội bằng <b>Chuột hoặc Cảm ứng</b>.</div>'
+              );
+            } else {
+              errMsg = 'Bạn chưa cấp quyền Camera. Hãy bấm biểu tượng ổ khóa 🔒 trên thanh địa chỉ trình duyệt và chọn Cho phép Camera.';
+              showCameraHelpModal(
+                'Cần cấp quyền truy cập Camera',
+                'Trình duyệt đang chặn quyền mở Webcam cho trang này (Permission denied).',
+                '<div>1️⃣ Bấm biểu tượng <b>ổ khóa 🔒</b> hoặc <b>máy ảnh 📷</b> bên trái thanh địa chỉ trình duyệt.</div>' +
+                '<div>2️⃣ Chuyển mục <b>Máy ảnh (Camera)</b> sang trạng thái <b>Cho phép (Allow)</b>.</div>' +
+                '<div>3️⃣ Bấm nút <b>Thử bật Camera lại</b> bên dưới (hoặc tải lại trang nếu trình duyệt yêu cầu).</div>'
+              );
+            }
+          } else if (isBusy) {
+            errMsg = 'Webcam đang được sử dụng bởi ứng dụng hoặc tab khác (Zoom, Zalo, Meet...). Hãy tắt ứng dụng kia rồi thử lại.';
+            showCameraHelpModal(
+              'Webcam đang bận',
+              errMsg,
+              '<div>• Kiểm tra xem có tab trình duyệt hoặc ứng dụng gọi video nào đang dùng Camera không, tắt đi rồi bấm <b>Thử bật Camera lại</b>.</div>'
+            );
+          } else if (isNotFound) {
+            errMsg = 'Không tìm thấy Webcam trên thiết bị này. Hãy kết nối camera hoặc chơi bằng chuột / cảm ứng.';
+          } else if (rawMsg === 'NO_MEDIAPIPE_ENGINE') {
+            errMsg = 'Không tải được mô hình AI MediaPipe (kiểm tra kết nối mạng). Chuyển sang chế độ chuột.';
+          }
+
+          setCameraErrorBox(errMsg);
+          showToast(errMsg, '⚠️', 4800);
+        }
+      }
+
+      /** Vòng lặp nhận diện tự điều tiết tốc độ (Adaptive Frame Pacing) để webcam không bao giờ bị lag */
+      function runHandDetectionLoop() {
+        if (state.ar.rafId) {
+          cancelAnimationFrame(state.ar.rafId);
+          state.ar.rafId = null;
+        }
+
+        async function step() {
+          if (!state.ar.running) return;
+
+          const now = performance.now();
+          const video = dom.video;
+          if (
+            now >= state.ar.nextInferAt &&
+            video.readyState >= 2 &&
+            video.videoWidth > 0 &&
+            !state.ar.sendingFrame
+          ) {
+            const vTime = video.currentTime;
+            if (vTime !== state.ar.lastVideoTime) {
+              state.ar.lastVideoTime = vTime;
+              state.ar.sendingFrame = true;
+              const t0 = performance.now();
+              try {
+                if (state.ar.engine === 'tasks-vision' && state.ar.landmarker) {
+                  // Đảm bảo timestamp luôn tăng đơn điệu (bắt buộc với MediaPipe VIDEO mode)
+                  const safeTs = Math.max(Math.floor(t0), state.ar.lastDetectTs + 1);
+                  state.ar.lastDetectTs = safeTs;
+                  const result = state.ar.landmarker.detectForVideo(video, safeTs);
+                  const inferMs = performance.now() - t0;
+                  state.ar.lastInferMs = state.ar.lastInferMs === 0 ? inferMs : state.ar.lastInferMs * 0.7 + inferMs * 0.3;
+                  // Tự giãn nhịp nhẹ nếu máy yếu để luồng video & vẽ 60fps luôn mượt
+                  const paceMs = clampVal(state.ar.lastInferMs * 1.45, 34, 95);
+                  state.ar.nextInferAt = performance.now() + paceMs;
+                  processDetectedHands(result.landmarks || [], performance.now());
+                } else if (state.ar.engine === 'legacy-hands' && state.ar.handsInstance) {
+                  await state.ar.handsInstance.send({ image: video });
+                  const inferMs = performance.now() - t0;
+                  state.ar.lastInferMs = state.ar.lastInferMs === 0 ? inferMs : state.ar.lastInferMs * 0.7 + inferMs * 0.3;
+                  state.ar.nextInferAt = performance.now() + clampVal(state.ar.lastInferMs * 1.2, 36, 100);
+                }
+              } catch (e) {
+                state.ar.nextInferAt = performance.now() + 60;
+              } finally {
+                state.ar.sendingFrame = false;
+              }
+            }
+          }
+
+          if (state.ar.running) {
+            state.ar.rafId = requestAnimationFrame(step);
+          }
+        }
+
+        state.ar.rafId = requestAnimationFrame(step);
+      }
+
+      function stopTwoHandAI(silent = false) {
+        state.ar.running = false;
+        state.ar.sendingFrame = false;
+        state.ar.detectedHandsCount = 0;
+        state.ar.rawLandmarks = [];
+        state.ar.overlapPaused = false;
+        state.ar.fps = 0;
+        state.ar.lastInferMs = 0;
+        if (dom.panelInferMs) dom.panelInferMs.textContent = 'AI: -- ms';
+        if (state.ar.rafId) {
+          cancelAnimationFrame(state.ar.rafId);
+          state.ar.rafId = null;
+        }
+        cancelHandCalibration();
+        document.body.classList.remove('ar-active');
+        resizeCanvases();
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          team.hand.detected = false;
+          team.hand.graceHolding = false;
+          team.hand.landmarks = null;
+          team.hand.screenPoints = null;
+          team.hand.isGrabbing = false;
+          team.hand.grabFrames = 0;
+          team.hand.releaseFrames = 0;
+          team.hand.gestureStatus = 'none';
+          if (team.activeDrag && team.activeDrag.source === 'ar') {
+            cancelTeamDragSafely(teamId);
+          }
+        });
+
+        if (state.ar.mediaStream) {
+          state.ar.mediaStream.getTracks().forEach(track => track.stop());
+          state.ar.mediaStream = null;
+        }
+        dom.video.srcObject = null;
+        updateAIStatusUI('off', 'Chuột / Cảm ứng');
+
+        if (!silent) {
+          showToast('Đã chuyển sang chế độ kéo thả bằng Chuột / Cảm ứng 🖱️', '🖱️', 2400);
+        }
+      }
+
+      /* -----------------------------------------------------------------------
+       * 8. BỘ ĐẾM NGƯỢC, GỢI Ý 3 GIÂY, CHẤM ĐIỂM & CHƠI LẠI
+       * ----------------------------------------------------------------------- */
+      function formatMMSS(sec) {
+        const s = Math.max(0, Math.floor(sec));
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+      }
+
+      function updateTeamScoreHUD(teamId, bump = false) {
+        const team = state.teams[teamId];
+        const tDom = getTeamDOM(teamId);
+        tDom.scoreEl.textContent = String(team.score);
+        tDom.progressEl.textContent = `${team.correctCount}/${state.planetCount} hành tinh`;
+        if (bump) {
+          tDom.scoreEl.classList.remove('score-bump');
+          void tDom.scoreEl.offsetWidth;
+          tDom.scoreEl.classList.add('score-bump');
+        }
+      }
+
+      function updateTimerHUD() {
+        dom.countdownDisplay.textContent = formatMMSS(state.remainingSeconds);
+        if (state.remainingSeconds <= 15 && state.timerStarted && !state.matchEnded) {
+          dom.timerBox.classList.add('border-rose-400', 'animate-pulse');
+          dom.timerBox.classList.remove('border-amber-300/85');
+        } else {
+          dom.timerBox.classList.remove('border-rose-400', 'animate-pulse');
+          dom.timerBox.classList.add('border-amber-300/85');
+        }
+      }
+
+      function startCountdown() {
+        if (state.timerStarted || state.matchEnded) return;
+        state.timerStarted = true;
+        clearInterval(state.timerInterval);
+        state.timerInterval = setInterval(() => {
+          if (state.matchEnded) return;
+          state.remainingSeconds -= 1;
+          updateTimerHUD();
+          if (state.remainingSeconds <= 0) {
+            state.remainingSeconds = 0;
+            updateTimerHUD();
+            finishAndScoreMatch(null);
+          }
+        }, 1000);
+      }
+
+      function stopCountdown() {
+        clearInterval(state.timerInterval);
+        state.timerInterval = null;
+        state.timerStarted = false;
+      }
+
+      /** Nút Gợi ý 3 giây: Hiển thị tên hành tinh dưới các ô trống trong 3 giây rồi tự ẩn */
+      function triggerHint3Seconds() {
+        if (state.matchEnded) return;
+        ensureAudioContext();
+        sfxHint();
+
+        clearTimeout(state.hintTimeout);
+        clearInterval(state.hintCountdownInterval);
+        state.hintActive = true;
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          state.teams[teamId].slots.forEach((slot) => {
+            if (!slot.filled) {
+              slot.cellEl.classList.add('show-hint', 'hint-glow');
+            }
+          });
+        });
+
+        let left = 3;
+        dom.hintBtnLabel.textContent = `Gợi ý (${left}s)...`;
+        dom.btnHint3s.disabled = true;
+
+        state.hintCountdownInterval = setInterval(() => {
+          left -= 1;
+          if (left > 0) {
+            dom.hintBtnLabel.textContent = `Gợi ý (${left}s)...`;
+          }
+        }, 1000);
+
+        state.hintTimeout = setTimeout(() => {
+          clearHintEffect();
+        }, 3000);
+      }
+
+      function clearHintEffect() {
+        clearTimeout(state.hintTimeout);
+        clearInterval(state.hintCountdownInterval);
+        state.hintActive = false;
+        dom.hintBtnLabel.textContent = 'Gợi ý 3 giây';
+        dom.btnHint3s.disabled = false;
+        ['mars', 'saturn'].forEach((teamId) => {
+          state.teams[teamId].slots.forEach((slot) => {
+            slot.cellEl.classList.remove('show-hint', 'hint-glow');
+          });
+        });
+      }
+
+      /** Kết thúc ván đấu và chấm điểm chính xác giữa 2 đội */
+      function finishAndScoreMatch(completedFirstTeamId = null) {
+        if (state.matchEnded) return;
+        state.matchEnded = true;
+        stopCountdown();
+        clearHintEffect();
+
+        // Thả các hành tinh đang giữ dở nếu có
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          if (team.activeDrag) {
+            const p = team.activeDrag.planet;
+            team.activeDrag = null;
+            p.el.classList.remove('dragging');
+            clearTeamHoverSlot(teamId);
+            setPlanetPosition(p, p.homeX, p.homeY, true);
+          }
+        });
+
+        const mars = state.teams.mars;
+        const saturn = state.teams.saturn;
+
+        let winner = 'draw';
+        if (completedFirstTeamId) {
+          winner = completedFirstTeamId;
+        } else if (mars.score > saturn.score) {
+          winner = 'mars';
+        } else if (saturn.score > mars.score) {
+          winner = 'saturn';
+        } else if (mars.score > 0 && mars.lastScoreTimestamp !== saturn.lastScoreTimestamp) {
+          winner = mars.lastScoreTimestamp < saturn.lastScoreTimestamp ? 'mars' : 'saturn';
+        }
+
+        // Cập nhật nội dung bảng kết quả
+        dom.resultScoreMars.textContent = `${mars.score} điểm`;
+        dom.resultScoreSaturn.textContent = `${saturn.score} điểm`;
+        dom.resultDetailMars.textContent = `Đúng ${mars.correctCount}/${state.planetCount} hành tinh`;
+        dom.resultDetailSaturn.textContent = `Đúng ${saturn.correctCount}/${state.planetCount} hành tinh`;
+
+        dom.resultTimeMars.textContent = mars.finishElapsedSec !== null
+          ? `Hoàn thành trong ${formatMMSS(mars.finishElapsedSec)}`
+          : (mars.correctCount > 0 ? 'Đang hoàn thiện bảng' : 'Chưa ghép hành tinh');
+        dom.resultTimeSaturn.textContent = saturn.finishElapsedSec !== null
+          ? `Hoàn thành trong ${formatMMSS(saturn.finishElapsedSec)}`
+          : (saturn.correctCount > 0 ? 'Đang hoàn thiện bảng' : 'Chưa ghép hành tinh');
+
+        // Làm nổi bật thẻ đội thắng
+        dom.resultCardMars.classList.remove('ring-4', 'ring-amber-300', 'scale-[1.03]');
+        dom.resultCardSaturn.classList.remove('ring-4', 'ring-amber-300', 'scale-[1.03]');
+
+        if (winner === 'mars') {
+          dom.resultWinnerTitle.textContent = 'ĐỘI SAO HỎA CHIẾN THẮNG! 🚀';
+          dom.resultSubtitle.textContent = completedFirstTeamId
+            ? 'Đội Sao Hỏa đã sắp xếp đúng toàn bộ Hệ Mặt Trời nhanh nhất!'
+            : 'Đội Sao Hỏa giành nhiều điểm hơn và đạt chiến thắng chung cuộc!';
+          dom.resultCardMars.classList.add('ring-4', 'ring-amber-300', 'scale-[1.03]');
+          speakVietnamese('Chúc mừng Đội Sao Hỏa giành chiến thắng!');
+        } else if (winner === 'saturn') {
+          dom.resultWinnerTitle.textContent = 'ĐỘI SAO THỔ CHIẾN THẮNG! 🪐';
+          dom.resultSubtitle.textContent = completedFirstTeamId
+            ? 'Đội Sao Thổ đã sắp xếp đúng toàn bộ Hệ Mặt Trời nhanh nhất!'
+            : 'Đội Sao Thổ giành nhiều điểm hơn và đạt chiến thắng chung cuộc!';
+          dom.resultCardSaturn.classList.add('ring-4', 'ring-amber-300', 'scale-[1.03]');
+          speakVietnamese('Chúc mừng Đội Sao Thổ giành chiến thắng!');
+        } else {
+          dom.resultWinnerTitle.textContent = 'HAI ĐỘI HÒA NHAU! 🤝';
+          dom.resultSubtitle.textContent = 'Đội Sao Hỏa và Đội Sao Thổ ngang tài ngang sức, thật tuyệt vời!';
+          speakVietnamese('Hai đội phi hành gia hòa nhau! Cả hai đội đều rất giỏi!');
+        }
+
+        sfxVictory();
+        launchFireworkSalvo();
+        clearInterval(state.fireworkTimer);
+        state.fireworkTimer = setInterval(launchFireworkSalvo, 950);
+
+        setTimeout(() => {
+          dom.resultModal.classList.remove('hidden');
+        }, 380);
+      }
+
+      /** Reset toàn bộ ván chơi cho cả 2 đội */
+      function resetMatch(showNotification = false) {
+        stopCountdown();
+        clearHintEffect();
+        clearInterval(state.fireworkTimer);
+        state.fireworkTimer = null;
+
+        state.matchEnded = false;
+        state.remainingSeconds = TIME_OPTIONS[state.timeOptionIndex];
+        dom.resultModal.classList.add('hidden');
+
+        ['mars', 'saturn'].forEach((teamId) => {
+          const team = state.teams[teamId];
+          team.score = 0;
+          team.correctCount = 0;
+          team.finishElapsedSec = null;
+          team.lastScoreTimestamp = Infinity;
+          team.hoveredSlot = null;
+          team.activeDrag = null;
+        });
+
+        buildBothTeamBoards();
+        updateTeamScoreHUD('mars', false);
+        updateTeamScoreHUD('saturn', false);
+        updateTimerHUD();
+
+        if (showNotification) {
+          showToast(`Ván mới (${state.planetCount} hành tinh – ${TIME_OPTIONS[state.timeOptionIndex] / 60} phút) đã sẵn sàng! 🚀`, '🔄', 2200);
+        }
+      }
+
+      /* -----------------------------------------------------------------------
+       * 9. CANVAS: SAO NỀN, PHÁO HOA, HẠT NGÔI SAO & 2 CON TRỎ AR ĐỘC LẬP
+       * ----------------------------------------------------------------------- */
+      function resizeCanvases() {
+        // Giữ nền sao ở 1x DPR và giảm fxCanvas về 1x khi chạy Camera AR để chống lag tuyệt đối
+        const fxDpr = state.ar.running ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+
+        dom.bgCanvas.width = w;
+        dom.bgCanvas.height = h;
+        dom.bgCanvas.style.width = `${w}px`;
+        dom.bgCanvas.style.height = `${h}px`;
+        bgCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+        dom.fxCanvas.width = Math.floor(w * fxDpr);
+        dom.fxCanvas.height = Math.floor(h * fxDpr);
+        dom.fxCanvas.style.width = `${w}px`;
+        dom.fxCanvas.style.height = `${h}px`;
+        fxCtx.setTransform(fxDpr, 0, 0, fxDpr, 0, 0);
+
+        initBgStars(w, h);
+        syncAllPositions(false);
+      }
+
+      /** Tạo các ngôi sao lấp lánh trên nền vũ trụ 2 đội */
+      function initBgStars(w, h) {
+        const count = Math.min(130, Math.max(60, Math.floor((w * h) / 11500)));
+        const hues = [0, 48, 198, 285, 335];
+        state.bgStars = Array.from({ length: count }, () => ({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          r: 0.75 + Math.random() * 1.85,
+          phase: Math.random() * Math.PI * 2,
+          speed: 0.012 + Math.random() * 0.032,
+          hue: hues[Math.floor(Math.random() * hues.length)]
+        }));
+      }
+
+      /** Vẽ hình ngôi sao nhiều cánh trên Canvas */
+      function drawStarShape(ctx, cx, cy, spikes, outerR, innerR, rot = 0) {
+        let angle = -Math.PI / 2 + rot;
+        const step = Math.PI / spikes;
+        ctx.beginPath();
+        for (let i = 0; i < spikes; i++) {
+          ctx.lineTo(cx + Math.cos(angle) * outerR, cy + Math.sin(angle) * outerR);
+          angle += step;
+          ctx.lineTo(cx + Math.cos(angle) * innerR, cy + Math.sin(angle) * innerR);
+          angle += step;
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      /** Hiệu ứng chùm ngôi sao nổ khi chọn hoặc đặt đúng hành tinh */
+      function spawnStarBurst(x, y, baseColor = '#fde047', count = 24) {
+        const palette = [baseColor, '#fde047', '#ffffff', '#38bdf8', '#f472b6', '#4ade80'];
+        for (let i = 0; i < count; i++) {
+          const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.35;
+          const speed = 2.2 + Math.random() * 5.2;
+          state.particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 1.1,
+            gravity: 0.09 + Math.random() * 0.05,
+            size: 3.5 + Math.random() * 4.5,
+            color: palette[Math.floor(Math.random() * palette.length)],
+            alpha: 1,
+            decay: 0.018 + Math.random() * 0.016,
+            rot: Math.random() * Math.PI * 2,
+            vRot: (Math.random() - 0.5) * 0.22,
+            shape: Math.random() > 0.28 ? 'star' : 'circle'
+          });
+        }
+      }
+
+      /** Bắn loạt pháo hoa chúc mừng khi kết thúc ván đấu */
+      function launchFireworkSalvo() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const colors = ['#fde047', '#fb7185', '#38bdf8', '#4ade80', '#c084fc', '#fb923c'];
+        for (let b = 0; b < 3; b++) {
+          const cx = w * (0.18 + Math.random() * 0.64);
+          const cy = h * (0.16 + Math.random() * 0.42);
+          const color = colors[Math.floor(Math.random() * colors.length)];
+          spawnStarBurst(cx, cy, color, 28);
+        }
+      }
+
+      /** Vẽ khung xương 21 điểm khớp màu xanh cyan phát sáng (tối ưu siêu nhanh không dùng shadowBlur) */
+      function drawCyanHandSkeleton(ctx, pts, scale = 1, isGrabbing = false) {
+        if (!pts || pts.length < 21) return;
+
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // Tạo 1 path duy nhất cho toàn bộ 21 đường nối xương
+        ctx.beginPath();
+        for (let i = 0; i < HAND_CONNECTIONS.length; i++) {
+          const [a, b] = HAND_CONNECTIONS[i];
+          ctx.moveTo(pts[a].x, pts[a].y);
+          ctx.lineTo(pts[b].x, pts[b].y);
+        }
+
+        // Lớp 1: Hào quang neon rộng (thay thế shadowBlur giúp tăng tốc gấp ~10 lần)
+        ctx.strokeStyle = isGrabbing ? 'rgba(250, 204, 21, 0.34)' : 'rgba(6, 182, 212, 0.36)';
+        ctx.lineWidth = Math.max(4.5, 8.2 * scale);
+        ctx.stroke();
+
+        // Lớp 2: Thân xương xanh cyan rực rỡ
+        ctx.strokeStyle = isGrabbing ? '#fde047' : '#22d3ee';
+        ctx.lineWidth = Math.max(1.8, 3.0 * scale);
+        ctx.stroke();
+
+        // Lớp 3: Lõi sáng trắng sắc nét
+        ctx.strokeStyle = isGrabbing ? 'rgba(255, 255, 255, 0.9)' : 'rgba(207, 250, 254, 0.9)';
+        ctx.lineWidth = Math.max(0.8, 1.2 * scale);
+        ctx.stroke();
+
+        // Vẽ 21 điểm khớp (gom nhóm theo 3 lớp fill để giảm tối đa số lần đổi trạng thái Canvas)
+        const glowColor = isGrabbing ? 'rgba(250, 204, 21, 0.36)' : 'rgba(34, 211, 238, 0.38)';
+        const coreColor = isGrabbing ? '#facc15' : '#06b6d4';
+
+        // Hào quang ngoài 21 khớp
+        ctx.fillStyle = glowColor;
+        ctx.beginPath();
+        for (let i = 0; i < 21; i++) {
+          const p = pts[i];
+          const isTip = (i === 4 || i === 8 || i === 12 || i === 16 || i === 20);
+          const r = (isTip ? 9.5 : 6.6) * scale;
+          ctx.moveTo(p.x + r, p.y);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+
+        // Vòng màu cyan chính 21 khớp
+        ctx.fillStyle = coreColor;
+        ctx.beginPath();
+        for (let i = 0; i < 21; i++) {
+          const p = pts[i];
+          const isTip = (i === 4 || i === 8 || i === 12 || i === 16 || i === 20);
+          const r = (isTip ? 5.2 : 3.7) * scale;
+          ctx.moveTo(p.x + r, p.y);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+
+        // Tâm sáng trắng 21 khớp
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        for (let i = 0; i < 21; i++) {
+          const p = pts[i];
+          const isTip = (i === 4 || i === 8 || i === 12 || i === 16 || i === 20);
+          const r = (isTip ? 2.5 : 1.7) * scale;
+          ctx.moveTo(p.x + r, p.y);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      /** Vẽ khung xem camera nhỏ 21 landmarks trong bảng hiệu chỉnh */
+      function renderMiniHandPreview() {
+        if (!miniCtx || !state.ar.running || dom.aiSettingsPanel.classList.contains('hidden')) return;
+        const canvas = dom.miniHandPreview;
+        const cw = canvas.width;
+        const ch = canvas.height;
+        const video = dom.video;
+
+        miniCtx.clearRect(0, 0, cw, ch);
+
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          miniCtx.save();
+          miniCtx.translate(cw, 0);
+          miniCtx.scale(-1, 1);
+          miniCtx.drawImage(video, 0, 0, cw, ch);
+          miniCtx.restore();
+        } else {
+          miniCtx.fillStyle = '#020617';
+          miniCtx.fillRect(0, 0, cw, ch);
+        }
+
+        // Đường chia đôi 2 đội trên khung xem nhỏ
+        miniCtx.save();
+        miniCtx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        miniCtx.setLineDash([4, 4]);
+        miniCtx.lineWidth = 1.5;
+        miniCtx.beginPath();
+        miniCtx.moveTo(cw / 2, 0);
+        miniCtx.lineTo(cw / 2, ch);
+        miniCtx.stroke();
+        miniCtx.restore();
+
+        // Vẽ toàn bộ 21 landmarks màu cyan trên khung xem nhỏ
+        const list = state.ar.rawLandmarks;
+        if (list && list.length > 0) {
+          for (const lm of list) {
+            const miniPts = lm.map(p => ({ x: (1 - p.x) * cw, y: p.y * ch }));
+            drawCyanHandSkeleton(miniCtx, miniPts, 0.62, false);
+          }
+        }
+      }
+
+      /** Vẽ khung xương 21 khớp + con trỏ AR cho từng bàn tay */
+      function drawTeamHandCursor(ctx, teamId, time) {
+        if (!state.ar.running) return;
+        const team = state.teams[teamId];
+        const hand = team.hand;
+        if (!hand.detected) return;
+
+        // Cập nhật bộ lọc làm mượt thích ứng 60fps để kéo thả mượt ngay cả khi camera ở 30fps
+        if (!hand.graceHolding && !state.ar.overlapPaused) {
+          updateAdaptiveCursor(teamId);
+          if (team.activeDrag && team.activeDrag.source === 'ar') {
+            moveTeamDrag(teamId, hand.cursorX, hand.cursorY);
+          }
+        }
+
+        // 1. Vẽ khung xương 21 khớp màu xanh cyan phát sáng nếu đang bật
+        if (state.aiConfig.showSkeleton && hand.screenPoints) {
+          drawCyanHandSkeleton(ctx, hand.screenPoints, 1.0, hand.isGrabbing);
+        }
+
+        const x = hand.cursorX;
+        const y = hand.cursorY;
+        const grabbing = hand.isGrabbing;
+        const isMars = teamId === 'mars';
+        const isPinchMode = state.aiConfig.gestureMode === 'pinch';
+        const ringColor = grabbing ? '#fde047' : (isMars ? '#fb7185' : '#22d3ee');
+        const haloMid = grabbing ? 'rgba(250, 204, 21, 0.55)' : team.glowRgba;
+
+        ctx.save();
+        if (hand.graceHolding || state.ar.overlapPaused) {
+          ctx.globalAlpha = 0.65;
+        }
+
+        // Tia nối ngón cái & ngón trỏ khi ở chế độ CHỤM–THẢ
+        if (isPinchMode) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(hand.thumbX, hand.thumbY);
+          ctx.strokeStyle = grabbing ? 'rgba(253, 224, 71, 0.92)' : ringColor;
+          ctx.lineWidth = grabbing ? 4 : 2.2;
+          ctx.setLineDash(grabbing ? [] : [5, 5]);
+          ctx.stroke();
+
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(hand.thumbX, hand.thumbY, grabbing ? 6.5 : 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = grabbing ? '#facc15' : ringColor;
+          ctx.fill();
+        }
+
+        // Hào quang phát sáng quanh con trỏ ảo
+        const pulse = 1 + Math.sin(time * 0.008) * 0.09;
+        const outerR = (grabbing ? 28 : 24) * pulse;
+        const grad = ctx.createRadialGradient(x, y, 3, x, y, outerR * 1.45);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
+        grad.addColorStop(0.5, haloMid);
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, outerR * 1.45, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Vòng tròn định vị sắc nét
+        ctx.beginPath();
+        ctx.arc(x, y, outerR * 0.78, 0, Math.PI * 2);
+        ctx.strokeStyle = ringColor;
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+
+        // Ngôi sao phát sáng ở tâm con trỏ
+        ctx.fillStyle = grabbing ? '#fef08a' : '#ffffff';
+        drawStarShape(ctx, x, y, 5, grabbing ? 10 : 8, grabbing ? 4.5 : 3.6, time * 0.002);
+
+        // Nhãn phản hồi trạng thái khi nắm/chụm hoặc kéo hành tinh
+        const hasPlanet = Boolean(team.activeDrag && team.activeDrag.source === 'ar');
+        if (grabbing || hasPlanet) {
+          const tag = hasPlanet
+            ? (hand.gestureStatus === 'dragging' ? '🚀 Đang kéo' : '✨ Đã chọn')
+            : (isPinchMode ? '🤏 Đang chụm' : '✊ Đang nắm');
+          ctx.font = '800 12px Nunito, sans-serif';
+          const tw = ctx.measureText(tag).width + 16;
+          const bx = x - tw / 2;
+          const by = y - outerR - 30;
+          ctx.fillStyle = hasPlanet ? 'rgba(74, 222, 128, 0.96)' : 'rgba(250, 204, 21, 0.96)';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(bx, by, tw, 24, 12);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = '#0f172a';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(tag, x, by + 12.5);
+        }
+
+        ctx.restore();
+      }
+
+      function animationLoop(time) {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+
+        // 1. Vẽ nền sao lấp lánh (giảm tần suất vẽ khi đang bật Camera để ưu tiên GPU cho webcam)
+        const bgInterval = state.ar.running ? 90 : 32;
+        if (time - state.ar.lastBgDraw >= bgInterval) {
+          state.ar.lastBgDraw = time;
+          bgCtx.clearRect(0, 0, w, h);
+          const opacityScale = state.ar.running ? 0.55 : 0.95;
+          const stepStar = state.ar.running ? 2 : 1;
+          for (let i = 0; i < state.bgStars.length; i += stepStar) {
+            const s = state.bgStars[i];
+            s.phase += s.speed * (state.ar.running ? 2.2 : 1.2);
+            const a = (0.25 + 0.75 * (0.5 + 0.5 * Math.sin(s.phase))) * opacityScale;
+            bgCtx.fillStyle = s.hue === 0
+              ? `rgba(255, 255, 255, ${a.toFixed(2)})`
+              : `hsla(${s.hue}, 95%, 84%, ${a.toFixed(2)})`;
+            if (!state.ar.running && s.r > 2.0) {
+              drawStarShape(bgCtx, s.x, s.y, 4, s.r * 2, s.r * 0.65, 0);
+            } else {
+              bgCtx.beginPath();
+              bgCtx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+              bgCtx.fill();
+            }
+          }
+        }
+
+        // 2. Vẽ hiệu ứng hạt sao, pháo hoa & 2 con trỏ bàn tay AR
+        fxCtx.clearRect(0, 0, w, h);
+        for (let i = state.particles.length - 1; i >= 0; i--) {
+          const p = state.particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += p.gravity;
+          p.vx *= 0.985;
+          p.rot += p.vRot;
+          p.alpha -= p.decay;
+          if (p.alpha <= 0) {
+            state.particles.splice(i, 1);
+            continue;
+          }
+          fxCtx.save();
+          fxCtx.globalAlpha = Math.max(0, p.alpha);
+          fxCtx.fillStyle = p.color;
+          if (p.shape === 'star') {
+            drawStarShape(fxCtx, p.x, p.y, 5, p.size * 1.35, p.size * 0.58, p.rot);
+          } else {
+            fxCtx.beginPath();
+            fxCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            fxCtx.fill();
+          }
+          fxCtx.restore();
+        }
+
+        drawTeamHandCursor(fxCtx, 'mars', time);
+        drawTeamHandCursor(fxCtx, 'saturn', time);
+
+        // Chỉ cập nhật khung xem camera nhỏ ở ~15 FPS khi đang mở bảng cài đặt
+        if (time - state.ar.lastMiniDraw >= 65) {
+          state.ar.lastMiniDraw = time;
+          renderMiniHandPreview();
+        }
+
+        requestAnimationFrame(animationLoop);
+      }
+
+      /* -----------------------------------------------------------------------
+       * 10. GẮN SỰ KIỆN CHO TOÀN BỘ 7 NÚT THANH CÔNG CỤ & CÁC NÚT PHỤ
+       * ----------------------------------------------------------------------- */
+      function toggleFullscreenMode() {
+        try {
+          if (!document.fullscreenElement) {
+            const req = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+            if (req) {
+              Promise.resolve(req.call(document.documentElement)).catch(() => {
+                showToast('Trình duyệt hiện không cho phép toàn màn hình trong khung nhúng. Bạn có thể bấm F11!', '⛶', 3200);
+              });
+            }
+          } else {
+            const exit = document.exitFullscreen || document.webkitExitFullscreen;
+            if (exit) Promise.resolve(exit.call(document)).catch(() => {});
+          }
+        } catch (err) {
+          showToast('Bạn có thể nhấn phím F11 để bật/tắt chế độ Toàn màn hình!', '⛶', 3000);
+        }
+      }
+
+      function syncFullscreenButton() {
+        const isFs = Boolean(document.fullscreenElement);
+        dom.fullscreenIcon.textContent = isFs ? '🗗' : '⛶';
+        dom.fullscreenLabel.textContent = isFs ? 'Thoát toàn màn hình' : 'Toàn màn hình';
+      }
+
+      function bindToolbarEvents() {
+        document.addEventListener('fullscreenchange', syncFullscreenButton);
+
+        // Nút Bật / Tắt âm thanh
+        dom.btnSound.addEventListener('click', () => {
+          state.soundEnabled = !state.soundEnabled;
+          dom.soundIcon.textContent = state.soundEnabled ? '🔊' : '🔇';
+          if (state.soundEnabled) {
+            ensureAudioContext();
+            sfxPickup();
+          }
+          showToast(
+            state.soundEnabled ? 'Đã bật âm thanh 🔊' : 'Đã tắt âm thanh 🔇',
+            state.soundEnabled ? '🔊' : '🔇',
+            1800
+          );
+        });
+
+        // 1. Nút Bật AI – 2 bàn tay
+        dom.btnToggleAI.addEventListener('click', () => {
+          ensureAudioContext();
+          if (state.ar.running) {
+            stopTwoHandAI(false);
+          } else {
+            startTwoHandAI();
+          }
+        });
+
+        // 2. Nút Chọn 4 hành tinh hoặc 8 hành tinh
+        dom.btnPlanetCount.addEventListener('click', () => {
+          ensureAudioContext();
+          sfxPickup();
+          state.planetCount = state.planetCount === 8 ? 4 : 8;
+          dom.planetCountLabel.textContent = `${state.planetCount} hành tinh`;
+          resetMatch(true);
+        });
+
+        // 3. Nút Chọn thời gian chơi (1 / 2 / 3 / 5 phút)
+        dom.btnSelectTime.addEventListener('click', () => {
+          ensureAudioContext();
+          sfxPickup();
+          state.timeOptionIndex = (state.timeOptionIndex + 1) % TIME_OPTIONS.length;
+          const mins = TIME_OPTIONS[state.timeOptionIndex] / 60;
+          dom.timeSelectLabel.textContent = `Thời gian: ${mins} phút`;
+          resetMatch(true);
+        });
+
+        // 4. Nút Gợi ý 3 giây
+        dom.btnHint3s.addEventListener('click', triggerHint3Seconds);
+
+        // 5. Nút Kết thúc và chấm điểm
+        dom.btnFinishScore.addEventListener('click', () => {
+          ensureAudioContext();
+          finishAndScoreMatch(null);
+        });
+
+        // 6. Nút Toàn màn hình
+        dom.btnFullscreen.addEventListener('click', () => {
+          ensureAudioContext();
+          toggleFullscreenMode();
+        });
+
+        // 7. Nút Chơi lại
+        dom.btnRestart.addEventListener('click', () => {
+          ensureAudioContext();
+          sfxPickup();
+          resetMatch(true);
+        });
+
+        // Bảng cài đặt & hiệu chỉnh AI 5 ngón ở góc trên phải
+        dom.btnAiSettings.addEventListener('click', () => {
+          ensureAudioContext();
+          dom.aiSettingsPanel.classList.toggle('hidden');
+          syncAISettingsUI();
+          updateTeamGestureBadges(performance.now());
+        });
+
+        dom.btnCloseAiSettings.addEventListener('click', () => {
+          dom.aiSettingsPanel.classList.add('hidden');
+        });
+
+        // Chọn chế độ cử chỉ: NẮM–XÒE hoặc CHỤM–THẢ
+        dom.groupGestureMode.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-gesture-mode]');
+          if (!btn) return;
+          state.aiConfig.gestureMode = btn.dataset.gestureMode;
+          syncAISettingsUI();
+          sfxPickup();
+          showToast(
+            state.aiConfig.gestureMode === 'fist'
+              ? 'Đã chuyển sang chế độ NẮM–XÒE (Xòe di chuyển • Nắm kéo • Mở thả) ✊'
+              : 'Đã chuyển sang chế độ CHỤM–THẢ (Chụm ngón cái & trỏ để chọn) 🤏',
+            '🖐️',
+            2600
+          );
+        });
+
+        // Bật/tắt lớp hiển thị khung xương 21 điểm khớp màu cyan
+        dom.toggleSkeletonOverlay.addEventListener('click', () => {
+          state.aiConfig.showSkeleton = !state.aiConfig.showSkeleton;
+          syncAISettingsUI();
+          sfxPickup();
+        });
+
+        // Bật/tắt chế độ bàn tay nhỏ trẻ 5–6 tuổi
+        dom.toggleChildMode.addEventListener('click', () => {
+          state.aiConfig.childSmallHandMode = !state.aiConfig.childSmallHandMode;
+          syncAISettingsUI();
+          sfxPickup();
+        });
+
+        // Chuyển đổi tốc độ / độ phân giải Camera chống lag (360p Mượt / 270p Siêu nhẹ)
+        if (dom.groupCamQuality) {
+          dom.groupCamQuality.addEventListener('click', async (ev) => {
+            const btn = ev.target.closest('button[data-cam-quality]');
+            if (!btn) return;
+            const nextQuality = btn.dataset.camQuality;
+            if (nextQuality === state.aiConfig.camQuality) return;
+            state.aiConfig.camQuality = nextQuality;
+            syncAISettingsUI();
+            sfxPickup();
+            if (state.ar.running) {
+              stopTwoHandAI(true);
+              await startTwoHandAI();
+            }
+          });
+        }
+
+        // Thanh trượt điều chỉnh độ nhạy nhận diện cử chỉ
+        dom.sliderAiSensitivity.addEventListener('input', (ev) => {
+          state.aiConfig.sensitivityLevel = Number(ev.target.value);
+          // Khi giáo viên chỉnh thanh độ nhạy, xóa ngưỡng hiệu chỉnh cũ để áp dụng ngay độ nhạy mới
+          ['mars', 'saturn'].forEach((teamId) => {
+            state.teams[teamId].hand.customFistGrab = null;
+            state.teams[teamId].hand.customFistRelease = null;
+            state.teams[teamId].hand.customPinchGrab = null;
+            state.teams[teamId].hand.customPinchRelease = null;
+          });
+          syncAISettingsUI();
+        });
+
+        // Chọn độ mượt con trỏ (Nhanh / Cân bằng / Mượt)
+        dom.groupCursorSmooth.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-smooth]');
+          if (!btn) return;
+          state.aiConfig.smoothPreset = btn.dataset.smooth;
+          syncAISettingsUI();
+          sfxPickup();
+        });
+
+        // Điều chỉnh kích thước vùng chọn hành tinh
+        dom.sliderHitMargin.addEventListener('input', (ev) => {
+          state.aiConfig.hitMarginPx = Number(ev.target.value);
+          syncAISettingsUI();
+        });
+
+        // Điều chỉnh khoảng cách hỗ trợ hút hành tinh vào ô
+        dom.sliderMagnetSnap.addEventListener('input', (ev) => {
+          state.aiConfig.magnetSnapMultiplier = Number(ev.target.value);
+          syncAISettingsUI();
+        });
+
+        // Chọn đối tượng hiệu chỉnh (Cả 2 đội / Đội Sao Hỏa / Đội Sao Thổ)
+        dom.groupCalibrationTarget.addEventListener('click', (ev) => {
+          const btn = ev.target.closest('button[data-cal-target]');
+          if (!btn) return;
+          state.aiConfig.calibrationTarget = btn.dataset.calTarget;
+          syncAISettingsUI();
+          sfxPickup();
+        });
+
+        // Nút Hiệu chỉnh bàn tay tự động
+        dom.btnCalibrateHand.addEventListener('click', startHandCalibration);
+
+        // Khôi phục mặc định tối ưu cho trẻ mầm non 5–6 tuổi
+        dom.btnResetAiConfig.addEventListener('click', () => {
+          cancelHandCalibration();
+          state.aiConfig.gestureMode = 'fist';
+          state.aiConfig.showSkeleton = true;
+          state.aiConfig.childSmallHandMode = true;
+          state.aiConfig.sensitivityLevel = 80;
+          state.aiConfig.smoothPreset = 'balanced';
+          state.aiConfig.hitMarginPx = 40;
+          state.aiConfig.magnetSnapMultiplier = 1.80;
+          ['mars', 'saturn'].forEach((teamId) => {
+            const h = state.teams[teamId].hand;
+            h.teamLocked = false;
+            h.lockedAnchorX = null;
+            h.customFistGrab = null;
+            h.customFistRelease = null;
+            h.customPinchGrab = null;
+            h.customPinchRelease = null;
+          });
+          syncAISettingsUI();
+          sfxPickup();
+          showToast('Đã khôi phục mặc định: NẮM–XÒE, khung xương Cyan, độ nhạy cao cho trẻ 5–6 tuổi!', '⚙️', 2600);
+        });
+
+        // Nút trở về thao tác bằng chuột / cảm ứng
+        dom.btnFallbackMouse.addEventListener('click', () => {
+          ensureAudioContext();
+          if (state.ar.running) {
+            stopTwoHandAI(false);
+          } else {
+            showToast('Đang ở chế độ thao tác bằng Chuột / Cảm ứng! Bạn có thể kéo thả hành tinh ngay 🖱️', '🖱️', 2400);
+          }
+          dom.aiSettingsPanel.classList.add('hidden');
+        });
+
+        // Nút trên bảng kết quả
+        dom.btnModalReplay.addEventListener('click', () => {
+          ensureAudioContext();
+          sfxPickup();
+          resetMatch(true);
+        });
+
+        dom.btnModalClose.addEventListener('click', () => {
+          dom.resultModal.classList.add('hidden');
+        });
+
+        // Nút trên hộp hướng dẫn cấp quyền Camera
+        dom.btnCamPermRetry.addEventListener('click', () => {
+          hideCameraHelpModal();
+          startTwoHandAI();
+        });
+
+        dom.btnCamPermMouse.addEventListener('click', () => {
+          hideCameraHelpModal();
+          showToast('Đã chuyển sang chế độ kéo thả bằng Chuột / Cảm ứng 🖱️', '🖱️', 2400);
+        });
+
+        // Tự động căn chỉnh khi đổi kích thước cửa sổ
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(resizeCanvases, 100);
+        });
+      }
+
+      /* -----------------------------------------------------------------------
+       * 11. KHỞI CHẠY ỨNG DỤNG KHI TẢI XONG TRANG
+       * ----------------------------------------------------------------------- */
+      window.onload = function () {
+        // Gắn SVG Mặt Trời cố định bên trái mỗi bảng đội
+        document.querySelectorAll('[data-sun-svg]').forEach((el) => {
+          el.innerHTML = buildSunSVG(el.dataset.sunSvg);
+        });
+
+        bindToolbarEvents();
+        syncAISettingsUI();
+        resetMatch(false);
+        resizeCanvases();
+        requestAnimationFrame(animationLoop);
+      };
+    })();
+  </script>
+</body>
+</html>
